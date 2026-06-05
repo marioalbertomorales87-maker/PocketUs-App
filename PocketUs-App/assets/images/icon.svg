@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+
+    <rect
+        width="1024"
+        height="1024"
+        rx="180"
+        fill="#1cb380" />
+
+    <g transform="translate(64 60) scale(0.87)">
+
+        <rect
+            x="172"
+            y="250"
+            width="684"
+            height="524"
+            rx="80"
+            fill="white" />
+
+        <rect
+            x="240"
+            y="316"
+            width="560"
+            height="30"
+            rx="15"
+            fill="#1cb380" />
+
+        <path
+            d="M 856,440
+               L 580,440
+               A 84,84 0 0,0 580,608
+               L 856,608"
+            fill="none"
+            stroke="#1cb380"
+            stroke-width="24" />
+
+        <circle
+            cx="732"
+            cy="524"
+            r="48"
+            fill="#1cb380" />
+
+    </g>
+
+</svg>
