@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -24,6 +24,9 @@ import {
   createFamilyPocket,
   createFamilyPocketBalance,
   createFamilyPeriod,
+  updateFamilyMember,
+  updateFamilyInitialIncome,
+  deleteFamilyMemberCascade,
   DashboardData,
   FamilyWorkspace,
   getFamilyViewData,
@@ -43,6 +46,7 @@ type ModalKey =
   | "detailBag"
   | "detailCommitment"
   | "detailPeriod"
+  | "confirmDeleteMember"
   | "formEditIncome"
   | "formNewMember"
   | "formNewPeriod"
@@ -71,6 +75,7 @@ export default function DashboardScreen({
       cardBackground: theme.colors.elevation.level2,
       cardBorder: theme.colors.outlineVariant,
       mutedText: theme.colors.onSurfaceVariant,
+      onSurface: theme.colors.onSurface,
       metricBackground: theme.colors.surfaceVariant,
       metricBorder: theme.colors.outlineVariant,
       navBackground: theme.colors.surface,
@@ -120,6 +125,9 @@ export default function DashboardScreen({
   const [periodSubmitError, setPeriodSubmitError] = useState<string | null>(null);
   const [isSavingMember, setIsSavingMember] = useState(false);
   const [isSavingPeriod, setIsSavingPeriod] = useState(false);
+  const [editIncomeValue, setEditIncomeValue] = useState("");
+  const [editIncomeId, setEditIncomeId] = useState<string | null>(null);
+  const [isSavingEditIncome, setIsSavingEditIncome] = useState(false);
 
   const [pocketName, setPocketName] = useState("");
   const [pocketBank, setPocketBank] = useState("");
@@ -164,6 +172,45 @@ export default function DashboardScreen({
     periods?: Array<Record<string, unknown> & { id: string }>;
     incomes?: Array<Record<string, unknown> & { id: string }>;
   } | null>(null);
+
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const selectedMember = useMemo(() => {
+    const members = viewData?.members ?? [];
+    if (!selectedMemberId) {
+      return members.length > 0 ? members[0] : null;
+    }
+    return members.find((item) => String(item.id || "") === selectedMemberId) ?? null;
+  }, [selectedMemberId, viewData?.members]);
+
+  const [memberDetailSaveError, setMemberDetailSaveError] = useState<string | null>(null);
+  const [isSavingMemberDetail, setIsSavingMemberDetail] = useState(false);
+
+  const currentCycle = useMemo(() => {
+    const periods = viewData?.periods ?? [];
+    const planned = periods.find((row) => String(row.state || "").toUpperCase() === "PLANIFICADO");
+    const active = periods.find((row) => {
+      const state = String(row.state || "").toUpperCase();
+      return state === "ACTIVO" || state === "ABIERTO";
+    });
+    return active ?? planned ?? null;
+  }, [viewData?.periods]);
+
+  const detailMemberMovements = useMemo(() => {
+    const memberId = selectedMemberId;
+    const movements = viewData?.movements ?? [];
+    if (!memberId || movements.length === 0) {
+      return movements;
+    }
+
+    const filtered = movements.filter((movement) => {
+      const memberMatch = String(movement.memberId || "") === memberId;
+      const originMatch = String(movement.originType || "").toUpperCase() === "MIEMBRO" && String(movement.referenceOrigin || "") === memberId;
+      const destinationMatch = String(movement.destinationType || "").toUpperCase() === "MIEMBRO" && String(movement.referenceDestination || "") === memberId;
+      return memberMatch || originMatch || destinationMatch;
+    });
+
+    return filtered.length > 0 ? filtered : movements;
+  }, [selectedMemberId, viewData?.movements]);
 
   useEffect(() => {
     let isActive = true;
@@ -220,6 +267,32 @@ export default function DashboardScreen({
     return safe.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
   };
 
+  const formatMovementDateTime = (movement: Record<string, unknown>) => {
+    const rawDate = movement.date || movement.createdAt || movement.timestamp || movement.dateTime;
+    let dateObj: Date | null = null;
+
+    if (typeof rawDate === "string") {
+      dateObj = new Date(rawDate);
+    } else if (typeof rawDate === "number") {
+      dateObj = new Date(rawDate);
+    } else if (rawDate && typeof (rawDate as any).toDate === "function") {
+      dateObj = (rawDate as any).toDate();
+    } else if (rawDate && typeof (rawDate as any).seconds === "number") {
+      dateObj = new Date((rawDate as any).seconds * 1000);
+    }
+
+    if (!dateObj || Number.isNaN(dateObj.getTime())) {
+      return {
+        dateLabel: String(movement.date || "Sin fecha"),
+        timeLabel: String(movement.time || ""),
+      };
+    }
+
+    const dateLabel = `${String(dateObj.getDate()).padStart(2, "0")}/${String(dateObj.getMonth() + 1).padStart(2, "0")}/${dateObj.getFullYear()}`;
+    const timeLabel = `${String(dateObj.getHours()).padStart(2, "0")}:${String(dateObj.getMinutes()).padStart(2, "0")}`;
+    return { dateLabel, timeLabel };
+  };
+
   const toPercent = (value: number) => {
     const safe = Number.isFinite(value) ? value : 0;
     return `${safe.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
@@ -252,7 +325,7 @@ export default function DashboardScreen({
   const hasCycle = Boolean(initializationCycle);
   const hasIncomes = initializationIncomes.length > 0;
 
-  const budgetCycle = plannedCycle ?? activeCycle;
+  const budgetCycle = activeCycle ?? plannedCycle;
   const expectedTotalIncome = Number(budgetCycle?.expectedTotalIncome || 0);
 
   const activePockets = (viewData?.pockets ?? []).filter(
@@ -448,6 +521,69 @@ export default function DashboardScreen({
   const handleQuickActionSelect = (target: ModalKey) => {
     setActiveModal(null);
     setTimeout(() => openModal(target), 80);
+  };
+
+  const handleOpenMemberDetail = (memberId: string) => {
+    const member = (viewData?.members ?? []).find((item) => String(item.id || "") === memberId) ?? null;
+    setSelectedMemberId(memberId);
+    setMemberActive(String(member?.state || "").toUpperCase() === "ACTIVE");
+    setMemberDetailSaveError(null);
+    // preload income info for edit
+    const income = (viewData?.incomes || []).find((inc) => String(inc.memberId || "") === memberId) ?? null;
+    setEditIncomeId(income ? String(income.id || "") : null);
+    setEditIncomeValue(income ? String(Number(income.realValue || income.pocketsValue || 0)) : "");
+    openModal("detailMember");
+  };
+
+  const handleSaveMemberDetail = async () => {
+    if (!selectedMemberId) {
+      return;
+    }
+    try {
+      setIsSavingMemberDetail(true);
+      setMemberDetailSaveError(null);
+      await updateFamilyMember(workspace.familyId, selectedMemberId, {
+        state: memberActive ? "ACTIVE" : "INACTIVE",
+      });
+      await refreshDashboard();
+      closeModal();
+    } catch (error) {
+      console.error("Dashboard update member detail error:", error);
+      setMemberDetailSaveError("No se pudieron guardar los cambios del miembro. Intenta de nuevo.");
+    } finally {
+      setIsSavingMemberDetail(false);
+    }
+  };
+
+  const handleSaveEditedIncome = async () => {
+    if (!selectedMemberId || !budgetCycle) return;
+    try {
+      setIsSavingEditIncome(true);
+      const valueNum = Number(editIncomeValue || "0");
+      if (!Number.isFinite(valueNum)) throw new Error("INVALID_VALUE");
+      await updateFamilyInitialIncome(workspace.familyId, String(budgetCycle.id || budgetCycle?.id || ""), selectedMemberId, valueNum);
+      await refreshDashboard();
+      closeModal();
+    } catch (error) {
+      console.error("Error updating income:", error);
+    } finally {
+      setIsSavingEditIncome(false);
+    }
+  };
+
+  const handleDeleteMember = async () => {
+    if (!selectedMemberId) return;
+    try {
+      setIsSavingMemberDetail(true);
+      await deleteFamilyMemberCascade(workspace.familyId, selectedMemberId);
+      await refreshDashboard();
+      closeModal();
+    } catch (error) {
+      console.error("Error deleting member:", error);
+      Alert.alert("Error", "No se pudo eliminar el miembro.");
+    } finally {
+      setIsSavingMemberDetail(false);
+    }
   };
 
   const closeModal = () => {
@@ -859,22 +995,95 @@ export default function DashboardScreen({
     }
 
     if (activeModal === "detailMember") {
+      const member = selectedMember ?? {
+        name: "Sin definir",
+        bank: "Sin definir",
+        contract: "Sin definir",
+        state: "INACTIVE",
+      };
+      const isActiveMember = Boolean(memberActive);
+
       return (
         <>
-          <PaperText variant="titleMedium">Detalle Miembro</PaperText>
-          <View style={styles.detailGroup}>
-            <PaperText>Nombre: {String(viewData?.members?.[0]?.name || "Sin definir")}</PaperText>
-            <PaperText>Banco: {String(viewData?.members?.[0]?.bank || "Sin definir")}</PaperText>
-            <PaperText>Contrato ingresos: {String(viewData?.members?.[0]?.contract || "Sin definir")}</PaperText>
-            <PaperText>Estado activo: {String(viewData?.members?.[0]?.state || "ACTIVE")}</PaperText>
+          <View style={styles.memberDetailAvatarContainer}>
+            <View style={[styles.memberIconWrap, styles.memberDetailAvatar]}>
+              <Icon source="account-circle" size={46} color={theme.colors.primary} />
+            </View>
           </View>
+
+          <TextInput
+            mode="outlined"
+            label="Nombre"
+            value={String(member.name || "Sin definir")}
+            editable={false}
+            style={styles.inputField}
+          />
+          <TextInput
+            mode="outlined"
+            label="Banco"
+            value={String(member.bank || "Sin definir")}
+            editable={false}
+            style={styles.inputField}
+          />
+          <TextInput
+            mode="outlined"
+            label="Contrato ingresos"
+            value={String(member.contract || "Sin definir")}
+            editable={false}
+            style={styles.inputField}
+          />
+
+          <Pressable style={styles.checkboxRow} onPress={() => setMemberActive((value) => !value)}>
+            <Checkbox status={memberActive ? "checked" : "unchecked"} />
+            <View>
+              <PaperText style={styles.checkboxText}>Miembro activo</PaperText>
+              <PaperText style={styles.helperText}>Indica que el miembro se encuentra habilitado dentro del sistema.</PaperText>
+            </View>
+          </Pressable>
+
           <Divider style={styles.divider} />
-          <PaperText variant="titleSmall">Movimientos del periodo actual</PaperText>
-          <PaperText style={styles.helperText}>Esta seccion mostrara movimientos conectados al backend.</PaperText>
+
+          <PaperText variant="titleSmall">Historial de movimientos</PaperText>
+          {detailMemberMovements.length === 0 ? (
+            <PaperText style={styles.helperText}>No hay movimientos para el ciclo abierto o planificado.</PaperText>
+          ) : (
+            <Card mode="elevated" style={[styles.movementCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
+              <Card.Content>
+                <PaperText variant="titleMedium">Movimientos de {String(currentCycle?.name || currentCycle?.id || "este ciclo")}</PaperText>
+                {detailMemberMovements.map((movement) => {
+                  const { dateLabel, timeLabel } = formatMovementDateTime(movement as Record<string, unknown>);
+                  const concept = String(movement.movementConcept || movement.concept || "Sin concepto");
+                  const value = movement.value != null ? toCurrency(Number(movement.value)) : String(movement.amount || "0");
+
+                  return (
+                    <View key={String(movement.id || `${concept}-${movement.createdAt || movement.date}`)} style={styles.movementRow}>
+                      <View style={styles.movementInfo}>
+                            <View style={styles.movementDetailRow}>
+                          <PaperText style={[styles.movementMeta, { color: uiColors.mutedText, flex: 1 }]}>{dateLabel}</PaperText>
+                          <PaperText style={[styles.movementMeta, { color: uiColors.mutedText, textAlign: "right" }]}>{timeLabel}</PaperText>
+                        </View>
+                        <View style={styles.movementDetailRow}>
+                          <PaperText style={[styles.movementLabel, { color: uiColors.onSurface, flex: 1 }]} numberOfLines={1}>{concept}</PaperText>
+                          <PaperText style={[styles.movementValue, { color: theme.dark ? "#6EE7B7" : "#059669", textAlign: "right" }]}>{value}</PaperText>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </Card.Content>
+            </Card>
+          )}
+
+          {memberDetailSaveError ? <PaperText style={styles.errorText}>{memberDetailSaveError}</PaperText> : null}
+
           <View style={styles.modalActions}>
-            <Button mode="outlined" onPress={() => openModal("formEditIncome")}>Editar ingreso</Button>
-            <Button mode="contained" disabled>Guardar cambios</Button>
-            <Button mode="text" textColor={theme.colors.error} disabled>Eliminar miembro</Button>
+            {String(currentCycle?.state || "").toUpperCase() === "PLANIFICADO" ? (
+              <Button mode="outlined" onPress={() => openModal("formEditIncome")}>Editar ingreso</Button>
+            ) : null}
+            <Button mode="contained" loading={isSavingMemberDetail} disabled={isSavingMemberDetail} onPress={handleSaveMemberDetail}>Guardar cambios</Button>
+            {String(currentCycle?.state || "").toUpperCase() === "PLANIFICADO" ? (
+              <Button mode="contained" buttonColor={theme.colors.error} textColor={theme.colors.onError} onPress={() => openModal("confirmDeleteMember")}>Eliminar miembro</Button>
+            ) : null}
           </View>
         </>
       );
@@ -891,7 +1100,7 @@ export default function DashboardScreen({
             <PaperText>Regla: {String(viewData?.pockets?.[0]?.rule || "Sin definir")}</PaperText>
             <PaperText>Categoria: {String(viewData?.pockets?.[0]?.category || "Sin definir")}</PaperText>
           </View>
-          <Card mode="elevated" style={styles.miniCard}>
+          <Card mode="elevated" style={[styles.miniCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
             <Card.Content>
               <PaperText variant="titleSmall">Saldo inicial</PaperText>
               <PaperText variant="bodyMedium">$0.00</PaperText>
@@ -926,43 +1135,50 @@ export default function DashboardScreen({
     }
 
     if (activeModal === "detailPeriod") {
-      const statusRaw = String(viewData?.movements?.[0]?.state || "PLANIFICADO").toUpperCase();
-      const status = statusRaw === "ABIERTO" || statusRaw === "CERRADO" ? statusRaw : "PLANIFICADO";
+      const cycle = budgetCycle ?? null;
+      const state = String(cycle?.state || "PLANIFICADO").toUpperCase();
+      const periodId = String(cycle?.id || "");
+      const periodName = String(cycle?.name || formatPeriodName(periodId) || "");
 
       return (
         <>
-          <PaperText variant="titleMedium">Detalle Periodo</PaperText>
-          <View style={styles.detailGroup}>
-            <PaperText>ID: {String(viewData?.movements?.[0]?.period || "Sin definir")}</PaperText>
-            <PaperText>Nombre: {String(viewData?.movements?.[0]?.periodName || "Sin definir")}</PaperText>
-            <PaperText>Estado: {status}</PaperText>
-            <PaperText>Ingreso esperado: {String(viewData?.movements?.[0]?.expectedIncome || "Sin definir")}</PaperText>
-            <PaperText>Ingreso real: {String(viewData?.movements?.[0]?.realIncome || "Sin definir")}</PaperText>
+          <View style={styles.sheetHandle} />
+
+          <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder, marginTop: 8 }]}> 
+            <Card.Content>
+              <PaperText variant="titleSmall" style={{ color: uiColors.onSurface }}>{periodName}</PaperText>
+              <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>ID: {periodId}</PaperText>
+              <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Estado: <PaperText style={{ color: state === "PLANIFICADO" ? theme.colors.primary : uiColors.onSurface }}>{state}</PaperText></PaperText>
+            </Card.Content>
+          </Card>
+
+          <View style={{ marginTop: 12 }}>
+            <View style={styles.metricsRow}>
+              <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}> 
+                <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>Ingreso esperado</PaperText>
+                <PaperText style={[styles.metricValueStrong, { color: uiColors.onSurface }]}>{toCurrency(Number(cycle?.expectedTotalIncome || 0))}</PaperText>
+              </View>
+              <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}> 
+                <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>Ingreso real</PaperText>
+                <PaperText style={[styles.metricValueStrong, { color: uiColors.onSurface }]}>{toCurrency(Number(cycle?.realTotalIncome || 0))}</PaperText>
+              </View>
+            </View>
           </View>
+
           <View style={styles.modalActions}>
-            {status === "PLANIFICADO" && (
-              <>
-                <Button mode="contained" disabled>Cerrar planificacion</Button>
-                <Button mode="text" textColor={theme.colors.error} disabled>Eliminar periodo</Button>
-              </>
-            )}
-            {status === "ABIERTO" && <Button mode="contained" disabled>Cerrar periodo</Button>}
-            {status === "CERRADO" && <PaperText style={styles.helperText}>Periodo cerrado: solo consulta.</PaperText>}
+            <Button mode="contained" onPress={() => closeModal()}>Cerrar</Button>
           </View>
         </>
       );
     }
 
-    if (activeModal === "formEditIncome") {
+    if (activeModal === "confirmDeleteMember") {
       return (
         <>
-          <PaperText variant="titleMedium">Editar ingreso</PaperText>
-          <TextInput mode="outlined" label="Nombre miembro" value={String(viewData?.members?.[0]?.name || "Sin definir")} editable={false} style={styles.inputField} />
-          <TextInput mode="outlined" label="Ingreso actual" value={String(viewData?.members?.[0]?.income || "0")} editable={false} style={styles.inputField} />
-          <TextInput mode="outlined" label="Ingreso" style={styles.inputField} keyboardType="numeric" />
-          <PaperText style={styles.helperText}>Al guardar se registrara un movimiento de ingreso base.</PaperText>
+          <PaperText style={[styles.helperText, { marginTop: 8 }]}>¿Estás seguro de que deseas eliminar este miembro y todos sus registros asociados? Esta acción no se puede deshacer.</PaperText>
           <View style={styles.modalActions}>
-            <Button mode="contained" disabled>Guardar ingreso</Button>
+            <Button mode="outlined" onPress={() => closeModal()}>Cancelar</Button>
+            <Button mode="contained" buttonColor={theme.colors.error} textColor={theme.colors.onError} loading={isSavingMemberDetail} disabled={isSavingMemberDetail} onPress={handleDeleteMember}>Eliminar miembro</Button>
           </View>
         </>
       );
@@ -980,23 +1196,23 @@ export default function DashboardScreen({
           <View style={styles.sheetHandle} />
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Nombre</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Nombre</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Nombre del participante" style={styles.inputField} value={memberName} onChangeText={setMemberName} />
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Banco</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Banco</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Entidad financiera" style={styles.inputField} value={memberBank} onChangeText={setMemberBank} />
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Contrato ingresos</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Contrato ingresos</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Contrato referencial" style={styles.inputField} value={memberContract} onChangeText={setMemberContract} />
           </View>
 
           <Pressable style={styles.checkboxRow} onPress={() => setMemberActive((value) => !value)}>
             <Checkbox status={memberActive ? "checked" : "unchecked"} />
-            <PaperText style={styles.checkboxText}>Miembro activo</PaperText>
+            <PaperText style={[styles.checkboxText, { color: uiColors.onSurface }]}>Miembro activo</PaperText>
           </Pressable>
 
           {memberSubmitError ? <PaperText style={styles.errorText}>{memberSubmitError}</PaperText> : null}
@@ -1017,7 +1233,7 @@ export default function DashboardScreen({
           <View style={styles.sheetHandle} />
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>ID periodo</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>ID periodo</PaperText>
             <TextInput
               mode="outlined"
               placeholder="Formato: AAAA-MM"
@@ -1028,7 +1244,7 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>MES</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>MES</PaperText>
             <TextInput
               mode="outlined"
               placeholder="Nombre generado automaticamente"
@@ -1064,12 +1280,12 @@ export default function DashboardScreen({
           <View style={styles.sheetHandle} />
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Nombre bolsa</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Nombre bolsa</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Nombre de bolsa" style={styles.inputField} value={pocketName} onChangeText={setPocketName} />
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Tipo categoria</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Tipo categoria</PaperText>
             <View style={styles.segmentRow}>
               {(["Gasto", "Ahorro"] as const).map((item) => (
                 <Button
@@ -1086,17 +1302,17 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Banco</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Banco</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Entidad financiera" style={styles.inputField} value={pocketBank} onChangeText={setPocketBank} />
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Contrato</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Contrato</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Contrato referencial" style={styles.inputField} value={pocketContract} onChangeText={setPocketContract} />
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Tipo regla</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Tipo regla</PaperText>
             <View style={styles.segmentRow}>
               {(["Valor", "Porcentaje", "Restante"] as const).map((item) => (
                 <Button
@@ -1120,7 +1336,7 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Valor regla</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Valor regla</PaperText>
             <TextInput
               mode="outlined"
               placeholder={isRemainingPocket ? "Calculado automaticamente" : "Ejemplo: Valor numerico"}
@@ -1187,7 +1403,7 @@ export default function DashboardScreen({
           <View style={styles.sheetHandle} />
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Cuenta Origen</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Cuenta Origen</PaperText>
             <Pressable style={styles.selectorField} onPress={() => setCommitmentAccountMenuVisible((prev) => !prev)}>
               <PaperText style={styles.selectorText}>{isAccountSelected ? commitmentAccountType : commitmentAccountPlaceholder}</PaperText>
               <Icon source={commitmentAccountMenuVisible ? "chevron-up" : "chevron-down"} size={18} color={theme.colors.onSurfaceVariant} />
@@ -1223,7 +1439,7 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Origen</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Origen</PaperText>
             <Pressable
               style={[styles.selectorField, !isAccountSelected && { opacity: 0.6 }]}
               onPress={() => {
@@ -1264,17 +1480,17 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Concepto</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Concepto</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Concepto del compromiso" style={styles.inputField} value={commitmentConcept} onChangeText={setCommitmentConcept} />
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Referencia pago</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Referencia pago</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Referencia descriptiva" style={styles.inputField} value={commitmentReference} onChangeText={setCommitmentReference} />
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Valor pensado</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Valor pensado</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Valor numerico" style={styles.inputField} keyboardType="numeric" value={commitmentEstimatedValue} onChangeText={setCommitmentEstimatedValue} />
           </View>
 
@@ -1303,7 +1519,7 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Fecha vencimiento</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Fecha vencimiento</PaperText>
             <Pressable
               style={styles.selectorField}
               onPress={() => setCommitmentEndedDatePickerVisible(true)}
@@ -1366,7 +1582,7 @@ export default function DashboardScreen({
           <View style={styles.sheetHandle} />
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Bolsa</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Bolsa</PaperText>
             <Pressable
               style={[styles.selectorField, !hasPockets && { opacity: 0.6 }]}
               onPress={() => {
@@ -1403,7 +1619,7 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Periodo</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Periodo</PaperText>
             <View style={styles.selectorField}>
               <PaperText style={styles.selectorText}>{effectivePeriodLabel}</PaperText>
               <Icon source="calendar-month-outline" size={18} color={theme.colors.onSurfaceVariant} />
@@ -1411,7 +1627,7 @@ export default function DashboardScreen({
           </View>
 
           <View style={styles.formBlock}>
-            <PaperText variant="labelLarge" style={styles.formLabel}>Monto (Saldo inicial mes)</PaperText>
+            <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Monto (Saldo inicial mes)</PaperText>
             <TextInput mode="outlined" placeholder="Ejemplo: Valor numerico" style={styles.inputField} keyboardType="numeric" value={balanceValue} onChangeText={setBalanceValue} />
           </View>
 
@@ -1472,7 +1688,7 @@ export default function DashboardScreen({
             <PaperText variant="labelLarge" style={styles.stepLabel}>Paso 1</PaperText>
 
             <View style={styles.formBlock}>
-              <PaperText variant="labelLarge" style={styles.formLabel}>Tipo</PaperText>
+              <PaperText variant="labelLarge" style={[styles.formLabel, { color: uiColors.onSurface }]}>Tipo</PaperText>
               <Pressable style={styles.selectorField} onPress={() => setMovementTypeMenuVisible((prev) => !prev)}>
                 <PaperText style={styles.selectorText}>{movementType || "Seleccione una opcion"}</PaperText>
                 <Icon source={movementTypeMenuVisible ? "chevron-up" : "chevron-down"} size={18} color={theme.colors.onSurfaceVariant} />
@@ -1728,12 +1944,10 @@ export default function DashboardScreen({
     }
 
     if (activeModal === "wizardInitialization") {
-      const planned = (viewData?.periods ?? []).find(
-        (item) => String(item.state || "").toUpperCase() === "PLANIFICADO"
-      );
-      const currentCycleLabel = planned
-        ? String(planned.id || planned.name || "Sin ciclo PLANIFICADO")
-        : "Sin ciclo PLANIFICADO";
+      const existingCurrentCycle = currentCycle;
+      const currentCycleLabel = existingCurrentCycle
+        ? String(existingCurrentCycle.name || existingCurrentCycle.id || "Ciclo abierto o planificado")
+        : "Sin ciclo abierto ni planificado";
       const members = viewData?.members ?? [];
       const existingMemberIncomes = new Set(
         (viewData?.incomes ?? []).map((income) => String(income.memberId || "")).filter(Boolean)
@@ -1746,6 +1960,7 @@ export default function DashboardScreen({
         const value = Number(wizardIncomeByMemberId[memberId] || "");
         return !Number.isFinite(value) || value <= 0;
       }).length;
+      const hasOpenOrPlannedCycle = Boolean(existingCurrentCycle);
 
       return (
         <>
@@ -1759,7 +1974,7 @@ export default function DashboardScreen({
           <PaperText variant="titleLarge" style={styles.wizardTitle}>Vamos a comenzar</PaperText>
           <PaperText style={styles.helperText}>Paso {wizardStep + 1} de 3</PaperText>
 
-          <Card mode="elevated" style={styles.wizardCard}>
+          <Card mode="elevated" style={[styles.wizardCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
             <Card.Content>
               {wizardStep === 0 && (
                 <>
@@ -1793,10 +2008,12 @@ export default function DashboardScreen({
                 <>
                   <PaperText variant="titleMedium" style={styles.wizardTaskTitle}>Segundo configura el ciclo</PaperText>
                   <PaperText style={styles.helperText}>Crea el periodo de trabajo actual antes de registrar ingresos.</PaperText>
+                  <PaperText style={styles.wizardCycleLabel}>{hasOpenOrPlannedCycle ? `Ciclo detectado: ${currentCycleLabel}` : "No se detectó un ciclo ABIERTO o PLANIFICADO."}</PaperText>
                   <Button
                     mode="contained"
-                    style={styles.wizardPrimaryTeal}
+                    style={[styles.wizardPrimaryTeal, hasOpenOrPlannedCycle && styles.disabledButton]}
                     contentStyle={styles.sheetButtonContent}
+                    disabled={hasOpenOrPlannedCycle}
                     onPress={() => openInitializationAction("formNewPeriod", 1)}
                   >
                     Crear ciclo
@@ -1807,7 +2024,7 @@ export default function DashboardScreen({
                     contentStyle={styles.sheetButtonContent}
                     onPress={handleInitializationContinue}
                   >
-                    Ya cree el ciclo
+                    {hasOpenOrPlannedCycle ? "Usar ciclo detectado" : "Ya cree el ciclo"}
                   </Button>
                 </>
               )}
@@ -1853,7 +2070,7 @@ export default function DashboardScreen({
                     mode="contained"
                     style={styles.wizardPrimaryIndigo}
                     contentStyle={styles.sheetButtonContent}
-                    disabled={isSavingWizardIncomes || members.length === 0 || !planned}
+                    disabled={isSavingWizardIncomes || members.length === 0 || !existingCurrentCycle}
                     onPress={handleSaveInitialIncomes}
                   >
                     {isSavingWizardIncomes ? "Guardando..." : "Guardar ingresos iniciales"}
@@ -1897,33 +2114,34 @@ export default function DashboardScreen({
       <ScrollView contentContainerStyle={styles.content}>
         {activeTab === "inicio" && (
           <>
-            <Card mode="elevated" style={[styles.summaryCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
-              <Card.Content>
-                <View style={styles.sectionHeaderRow}>
-                  <Icon source="chart-line" size={20} color={uiColors.icon} />
-                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Presupuesto mensual</PaperText>
-                </View>
-                <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>Control y distribucion del periodo actual.</PaperText>
+            <Pressable onPress={() => openModal("detailPeriod")} style={{ borderRadius: 14, overflow: "hidden" }} android_ripple={{ color: theme.colors.onSurfaceVariant }}>
+              <Card mode="elevated" style={[styles.summaryCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+                <Card.Content>
+                  <View style={styles.sectionHeaderRow}>
+                    <Icon source="chart-line" size={20} color={uiColors.icon} />
+                    <PaperText variant="titleMedium" style={styles.summaryTitle}>Presupuesto mensual</PaperText>
+                  </View>
+                  <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>Control y distribucion del periodo actual.</PaperText>
 
                 <View style={styles.metricsRow}>
                   <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={styles.metricLabel}>Periodo activo</PaperText>
-                    <PaperText style={styles.metricValue}>{String(budgetCycle?.name || budgetCycle?.id || "Sin ciclo")}</PaperText>
+                    <PaperText style={[styles.metricLabel, { color: theme.colors.onSurfaceVariant }]}>Periodo activo</PaperText>
+                    <PaperText style={[styles.metricValue, { color: uiColors.onSurface }]}>{String(budgetCycle?.name || budgetCycle?.id || "Sin ciclo")}</PaperText>
                   </View>
                   <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={styles.metricLabel}>Ingreso esperado</PaperText>
-                    <PaperText style={styles.metricValueStrong}>{toCurrency(expectedTotalIncome)}</PaperText>
+                    <PaperText style={[styles.metricLabel, { color: theme.colors.onSurfaceVariant }]}>Ingreso esperado</PaperText>
+                    <PaperText style={[styles.metricValueStrong, { color: uiColors.onSurface }]}>{toCurrency(expectedTotalIncome)}</PaperText>
                   </View>
                 </View>
 
                 <View style={styles.metricsRow}>
                   <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={styles.metricLabel}>Compromisos pendientes</PaperText>
-                    <PaperText style={styles.metricValue}>{pendingCommitments.length}</PaperText>
+                    <PaperText style={[styles.metricLabel, { color: theme.colors.onSurfaceVariant }]}>Compromisos pendientes</PaperText>
+                    <PaperText style={[styles.metricValue, { color: uiColors.onSurface }]}>{pendingCommitments.length}</PaperText>
                   </View>
                   <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={styles.metricLabel}>Proximo compromiso</PaperText>
-                    <PaperText style={styles.metricValue}>
+                    <PaperText style={[styles.metricLabel, { color: theme.colors.onSurfaceVariant }]}>Proximo compromiso</PaperText>
+                    <PaperText style={[styles.metricValue, { color: uiColors.onSurface }]}>
                       {nextCommitment
                         ? `${String(nextCommitment.name || nextCommitment.reference || "Compromiso")} (${String(nextCommitment.endedDate || "Sin fecha")})`
                         : "Sin pendientes"}
@@ -1932,8 +2150,8 @@ export default function DashboardScreen({
                 </View>
 
                 <View style={styles.progressHeader}>
-                  <PaperText style={styles.metricLabel}>Distribuido</PaperText>
-                  <PaperText style={styles.metricValue}>{toPercent(monthlyProgress)}</PaperText>
+                  <PaperText style={[styles.metricLabel, { color: theme.colors.onSurfaceVariant }]}>Distribuido</PaperText>
+                  <PaperText style={[styles.metricValue, { color: uiColors.onSurface }]}>{toPercent(monthlyProgress)}</PaperText>
                 </View>
                 <View style={styles.progressTrack}>
                   <View style={[styles.progressFill, { width: `${monthlyProgress}%` }]} />
@@ -1941,19 +2159,18 @@ export default function DashboardScreen({
 
                 <View style={styles.metricsRow}>
                   <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={styles.metricLabel}>Ahorros</PaperText>
-                    <PaperText style={styles.metricValueStrong}>{toCurrency(savingsTotal)}</PaperText>
+                    <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>Ahorros</PaperText>
+                    <PaperText style={[styles.metricValueStrong, { color: uiColors.onSurface }]}>{toCurrency(savingsTotal)}</PaperText>
                   </View>
-                  <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={styles.metricLabel}>Gastos</PaperText>
-                    <PaperText style={styles.metricValueStrong}>{toCurrency(expensesTotal)}</PaperText>
+                  <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}> 
+                    <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>Gastos</PaperText>
+                    <PaperText style={[styles.metricValueStrong, { color: uiColors.onSurface }]}>{toCurrency(expensesTotal)}</PaperText>
                   </View>
                 </View>
-                <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Total asignado: {toCurrency(distributedTotal)}</PaperText>
               </Card.Content>
             </Card>
-
-            <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+            </Pressable>
+            <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
               <Card.Content>
                 <View style={styles.sectionHeaderRow}>
                   <Icon source="account-group" size={20} color={uiColors.icon} />
@@ -1968,7 +2185,11 @@ export default function DashboardScreen({
                     const hasContribution = Number.isFinite(pocketsValue) && pocketsValue > 0;
 
                     return (
-                      <View key={memberId || `member-${index}`} style={styles.memberRow}>
+                      <Pressable
+                        key={memberId || `member-${index}`}
+                        style={styles.memberRow}
+                        onPress={() => handleOpenMemberDetail(memberId)}
+                      >
                         <View style={styles.memberInfoRow}>
                           <View style={[styles.memberIconWrap, { backgroundColor: uiColors.memberIconBackground }]}>
                             <Icon source="account-circle" size={18} color={uiColors.icon} />
@@ -1981,7 +2202,7 @@ export default function DashboardScreen({
                         <PaperText style={[hasContribution ? styles.memberStatusOk : styles.memberStatusPending, { color: hasContribution ? uiColors.successText : uiColors.warningText }]}>
                           {hasContribution ? "Completo" : "Pendiente"}
                         </PaperText>
-                      </View>
+                      </Pressable>
                     );
                   })
                 )}
@@ -2014,59 +2235,123 @@ export default function DashboardScreen({
         )}
 
         {activeTab === "bolsas" && (
-            <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
-            <Card.Content>
-              <View style={styles.sectionHeaderRow}>
-                <Icon source="wallet-outline" size={20} color={uiColors.icon} />
-                <PaperText variant="titleMedium" style={styles.summaryTitle}>Bolsas</PaperText>
-              </View>
-              {(data?.templates ?? []).map((template) => (
-                <Pressable key={`bag-${template}`} style={styles.entityRow} onPress={() => openModal("detailBag")}> 
-                  <PaperText variant="bodyMedium">{template}</PaperText>
-                  <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
-                </Pressable>
-              ))}
-              <Pressable style={styles.entityRow} onPress={() => openModal("detailCommitment")}> 
-                <PaperText variant="bodyMedium">Detalle compromiso</PaperText>
-                <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
-              </Pressable>
-            </Card.Content>
-          </Card>
+          <>
+            {(viewData?.pockets ?? []).length === 0 ? (
+              <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay bolsas registradas. Crea bolsas para organizar tu dinero.</PaperText>
+            ) : (
+              (viewData?.pockets ?? []).map((pocket) => {
+                const pocketId = String(pocket.id || "");
+                const pocketName = String(pocket.name || "Bolsa sin nombre");
+                const pocketRule = String(pocket.rule || pocket.valueRule || pocket.ruleValue || "Sin regla");
+                const pocketBank = String(pocket.bank || "Sin banco");
+                const pocketContract = String(pocket.contract || "Sin contrato");
+                
+                // Calcular movimientos de ingreso y gasto
+                const pocketMovements = (viewData?.movements ?? []).filter((m) => {
+                  const mType = String(m.destinationType || "").toUpperCase();
+                  const mRef = String(m.referenceDestination || "");
+                  return mType === "BOLSA" && mRef === pocketId;
+                });
+                
+                const incomeMovements = pocketMovements.filter((m) => String(m.type || "").toUpperCase() === "INGRESO");
+                const expenseMovements = pocketMovements.filter((m) => String(m.type || "").toUpperCase() === "GASTO");
+                
+                const incomeTotal = incomeMovements.reduce((sum, m) => sum + Number(m.value || 0), 0);
+                const expenseTotal = expenseMovements.reduce((sum, m) => sum + Number(m.value || 0), 0);
+                const initialBalance = Number(pocket.initialBalance ?? pocket.startingBalance ?? pocket.initialSaldo ?? pocket.balance ?? 0);
+                const pocketValue = initialBalance + incomeTotal - expenseTotal;
+                const pocketPercentage = expectedTotalIncome > 0 ? (pocketValue / expectedTotalIncome) * 100 : 0;
+                const pocketFillWidth = expectedTotalIncome > 0 ? Math.max(0, Math.min(pocketPercentage, 100)) : pocketValue !== 0 ? 12 : 0;
+                const pocketPercentageLabel = expectedTotalIncome > 0 ? `${Math.round(Math.max(0, Math.min(pocketPercentage, 100)))}%` : pocketValue !== 0 ? "Sin ingreso esperado" : "0%";
+                const statusLabel = getPocketStatusLabel(pocketPercentage);
+                const statusColor = getPocketStatusColor(pocketPercentage, theme);
+                const lastMovement = pocketMovements.length > 0 ? pocketMovements[pocketMovements.length - 1] : null;
+                
+                let lastMovementLabel = "Sin movimientos";
+                if (lastMovement) {
+                  const movDate = new Date(String(lastMovement.createdAt || lastMovement.date || ""));
+                  const today = new Date();
+                  const isToday = movDate.toDateString() === today.toDateString();
+                  lastMovementLabel = isToday ? "Hoy" : String(lastMovement.date || "Sin fecha");
+                }
+                
+                return (
+                  <Card key={pocketId} mode="elevated" style={[styles.pocketCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+                    <Card.Content>
+                      <View style={styles.pocketHeaderRow}>
+                        <View style={styles.pocketNameRow}>
+                          <Icon source={getPocketIconName(pocketName)} size={24} color={theme.colors.primary} />
+                          <PaperText variant="titleSmall" style={[styles.pocketName, { color: uiColors.onSurface }]}>{pocketName}</PaperText>
+                        </View>
+                        <PaperText variant="titleSmall" style={[styles.pocketValueStrong, { color: uiColors.onSurface }]}>{toCurrency(pocketValue)}</PaperText>
+                      </View>
+                      
+                      <PaperText variant="bodySmall" style={[styles.pocketRuleLabel, { color: uiColors.mutedText, textAlign: 'left' }]}>{`Regla: ${pocketRule}`}</PaperText>
+                      
+                      <View style={[styles.pocketProgressTrack, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                        <View style={[styles.pocketProgressFill, { width: `${pocketFillWidth}%`, backgroundColor: statusColor }]} />
+                      </View>
+                      <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText, marginTop: 4 }]}>{`Progreso: ${pocketPercentageLabel}`}</PaperText>
+                      <View style={styles.pocketStatusRow}>
+                        <PaperText variant="bodySmall" style={[styles.pocketStatusLabel, { color: statusColor }]}>{`Estado: ${statusLabel}`}</PaperText>
+                        <PaperText variant="bodySmall" style={[styles.pocketLastMovement, { color: uiColors.mutedText }]}>{`Último movimiento: ${lastMovementLabel}`}</PaperText>
+                      </View>
+                      
+                      <View style={styles.pocketBankRow}>
+                        <PaperText variant="bodySmall" style={[styles.pocketBank, { color: uiColors.onSurface }]}>{pocketBank}</PaperText>
+                        <PaperText variant="bodySmall" style={[styles.pocketContract, { color: uiColors.onSurface }]}>{pocketContract}</PaperText>
+                      </View>
+                    </Card.Content>
+                  </Card>
+                );
+              })
+            )}
+          </>
         )}
 
         {activeTab === "movimientos" && (
-          <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
-            <Card.Content>
-              <View style={styles.sectionHeaderRow}>
-                <Icon source="swap-horizontal" size={20} color={uiColors.icon} />
-                <PaperText variant="titleMedium" style={styles.summaryTitle}>Movimientos</PaperText>
-              </View>
-              <Pressable style={styles.entityRow} onPress={() => openModal("detailMember")}> 
-                <PaperText variant="bodyMedium">Detalle miembro</PaperText>
-                <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
-              </Pressable>
-              <Pressable style={styles.entityRow} onPress={() => openModal("formRegisterMovement")}> 
-                <PaperText variant="bodyMedium">Registrar movimiento</PaperText>
-                <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
-              </Pressable>
-            </Card.Content>
-          </Card>
+          <>
+            {!currentCycle ? (
+              <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay ciclo ABIERTO o PLANIFICADO. Crea uno para registrar movimientos.</PaperText>
+            ) : (viewData?.movements ?? []).length === 0 ? (
+              <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay movimientos en el ciclo actual.</PaperText>
+            ) : (
+              (viewData?.movements ?? []).map((movement) => {
+                const movId = String(movement.id || "");
+                const movType = String(movement.type || "");
+                const movConcept = String(movement.movementConcept || movement.concept || "Sin concepto");
+                const movValue = Number(movement.value || 0);
+                const isIncome = movType.toUpperCase() === "INGRESO";
+                const movColor = isIncome ? "#059669" : (theme.dark ? "#FB7185" : "#DC2626");
+                const movIcon = isIncome ? "arrow-down-circle" : "arrow-up-circle";
+                
+                const { dateLabel, timeLabel } = formatMovementDateTime(movement as Record<string, unknown>);
+                const fullDateTime = `${dateLabel} ${timeLabel}`;
+                
+                return (
+                  <Card key={movId} mode="elevated" style={[styles.movementCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+                    <Card.Content>
+                      <View style={styles.movementRowHeader}>
+                        <View style={styles.movementConceptRow}>
+                          <Icon source={movIcon} size={20} color={movColor} />
+                          <PaperText style={[styles.movementConcept, { color: uiColors.onSurface }]}>{movConcept}</PaperText>
+                        </View>
+                        <PaperText style={[styles.movementValueText, { color: movColor }]}>{toCurrency(movValue)}</PaperText>
+                      </View>
+                      <View style={styles.movementRowFooter}>
+                        <PaperText variant="bodySmall" style={[styles.movementDateTime, { color: uiColors.mutedText }]}>{fullDateTime}</PaperText>
+                        <PaperText variant="bodySmall" style={[styles.movementType, { color: theme.colors.onSurfaceVariant }]}>{movType.toUpperCase()}</PaperText>
+                      </View>
+                    </Card.Content>
+                  </Card>
+                );
+              })
+            )}
+          </>
         )}
 
         {activeTab === "historial" && (
-          <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
-            <Card.Content>
-              <View style={styles.sectionHeaderRow}>
-                <Icon source="history" size={20} color={uiColors.icon} />
-                <PaperText variant="titleMedium" style={styles.summaryTitle}>Historial</PaperText>
-              </View>
-              <Pressable style={styles.entityRow} onPress={() => openModal("detailPeriod")}> 
-                <PaperText variant="bodyMedium">Detalle periodo</PaperText>
-                <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
-              </Pressable>
-              <PaperText variant="bodySmall" style={styles.helperText}>Sin acciones rapidas para esta vista.</PaperText>
-            </Card.Content>
-          </Card>
+          <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Historial de ciclos anteriores no disponible. Los datos mostrados corresponden al ciclo actual.</PaperText>
         )}
       </ScrollView>
 
@@ -2228,10 +2513,11 @@ function modalTitle(activeModal: ModalKey | null) {
     formNewCommitment: "Crear compromiso",
     formRegisterBalance: "Registrar saldo",
     formRegisterMovement: "Registrar movimiento",
+    confirmDeleteMember: "Eliminar miembro",
     wizardInitialization: "Inicializacion",
   };
 
-  return map[activeModal];
+  return map[activeModal] || "";
 }
 
 function quickActionPillStyle(target: ModalKey) {
@@ -2350,12 +2636,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   metricValue: {
-    color: "#0F172A",
     fontWeight: "700",
     fontSize: 13,
   },
   metricValueStrong: {
-    color: "#0B4A6F",
     fontWeight: "800",
     fontSize: 16,
   },
@@ -2422,7 +2706,6 @@ const styles = StyleSheet.create({
   },
   memberName: {
     fontWeight: "700",
-    color: "#0F172A",
   },
   memberStatusOk: {
     fontWeight: "800",
@@ -2438,11 +2721,9 @@ const styles = StyleSheet.create({
   },
   pendingName: {
     fontWeight: "700",
-    color: "#0F172A",
   },
   pendingAmount: {
     fontWeight: "800",
-    color: "#1E293B",
   },
   bottomNav: {
     position: "absolute",
@@ -2588,7 +2869,6 @@ const styles = StyleSheet.create({
     color: "#4338CA",
   },
   helperText: {
-    color: "#64748B",
   },
   wizardHeaderRow: {
     flexDirection: "row",
@@ -2596,13 +2876,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   wizardCaption: {
-    color: "#059669",
     fontWeight: "700",
     fontSize: 13,
   },
   wizardTitle: {
     fontWeight: "800",
-    color: "#111827",
   },
   wizardCard: {
     borderRadius: 14,
@@ -2616,13 +2894,11 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   wizardTaskTitle: {
-    color: "#0F172A",
     fontWeight: "800",
   },
   wizardStatusText: {
     marginTop: 8,
     marginBottom: 10,
-    color: "#334155",
     fontWeight: "600",
   },
   wizardPrimaryGreen: {
@@ -2644,6 +2920,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginTop: 10,
     borderColor: "#D1D5DB",
+  },
+  disabledButton: {
+    opacity: 0.55,
   },
   wizardCycleLabel: {
     marginTop: 8,
@@ -2679,6 +2958,147 @@ const styles = StyleSheet.create({
   },
   detailGroup: {
     gap: 6,
+  },
+  memberDetailAvatarContainer: {
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  memberDetailAvatar: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  movementCard: {
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#E2E6EA",
+  },
+  movementRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  movementDetailRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+  },
+  movementInfo: {
+    flex: 1,
+  },
+  movementLabel: {
+    fontWeight: "700",
+  },
+  movementMeta: {
+    marginBottom: 4,
+  },
+  movementValue: {
+    fontWeight: "800",
+  },
+  pocketCard: {
+    borderRadius: 14,
+    marginTop: 12,
+    borderWidth: 1,
+  },
+  pocketHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  pocketNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  pocketName: {
+    fontWeight: "700",
+    flex: 1,
+  },
+  pocketValueStrong: {
+    fontWeight: "800",
+    fontSize: 16,
+  },
+  pocketRuleLabel: {
+    marginBottom: 8,
+    fontWeight: "600",
+  },
+  pocketProgressTrack: {
+    marginTop: 6,
+    height: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  pocketProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  pocketStatusRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  pocketStatusLabel: {
+    fontWeight: "700",
+  },
+  pocketLastMovement: {
+    fontWeight: "600",
+  },
+  pocketBankRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  pocketBank: {
+    fontWeight: "600",
+    flex: 1,
+  },
+  pocketContract: {
+    fontWeight: "600",
+    textAlign: "right",
+  },
+  movementRowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  movementConceptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  movementConcept: {
+    fontWeight: "700",
+    flex: 1,
+  },
+  movementValueText: {
+    fontWeight: "800",
+  },
+  movementRowFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  movementDateTime: {
+    fontWeight: "600",
+  },
+  movementType: {
+    fontWeight: "700",
+    fontSize: 12,
   },
   divider: {
     marginVertical: 10,
@@ -2734,11 +3154,9 @@ const styles = StyleSheet.create({
   },
   stepLabel: {
     fontWeight: "800",
-    color: "#111827",
   },
   formLabel: {
     fontWeight: "700",
-    color: "#111827",
   },
   checkboxRow: {
     flexDirection: "row",
@@ -2748,7 +3166,6 @@ const styles = StyleSheet.create({
   },
   checkboxText: {
     fontWeight: "600",
-    color: "#111827",
   },
   primarySheetButton: {
     borderRadius: 14,
@@ -2792,7 +3209,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   selectorText: {
-    color: "#111827",
     fontWeight: "500",
   },
   dropdownList: {
@@ -2810,7 +3226,6 @@ const styles = StyleSheet.create({
     borderBottomColor: "#EEF1F4",
   },
   dropdownItemText: {
-    color: "#111827",
     fontWeight: "600",
   },
   dropdownItemDisabled: {
@@ -2822,13 +3237,56 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
   },
   dropdownItemDisabledText: {
-    color: "#94A3B8",
     fontWeight: "600",
   },
   errorText: {
     color: "#DC2626",
   },
 });
+
+function getPocketMovementIcon(type: string): string {
+  const upper = String(type || "").toUpperCase();
+  if (upper === "INGRESO") return "arrow-down-circle";
+  if (upper === "GASTO") return "arrow-up-circle";
+  if (upper === "COMPROMISO") return "alert-circle";
+  if (upper === "RESERVADO") return "lock-clock";
+  return "swap-horizontal";
+}
+
+function getPocketMovementColor(type: string, theme: any): string {
+  const upper = String(type || "").toUpperCase();
+  if (upper === "INGRESO") return "#059669";
+  if (upper === "GASTO") return theme.dark ? "#FB7185" : "#DC2626";
+  if (upper === "COMPROMISO") return theme.dark ? "#FCA5A5" : "#F87171";
+  if (upper === "RESERVADO") return "#0EA5E9";
+  return theme.colors.onSurface;
+}
+
+function getPocketStatusLabel(percentage: number): string {
+  if (percentage < 60) return "Saludable";
+  if (percentage <= 85) return "Atención";
+  return "Excedido";
+}
+
+function getPocketStatusColor(percentage: number, theme: any): string {
+  if (percentage < 60) return "#059669"; // Verde
+  if (percentage <= 85) return "#D97706"; // Amarillo
+  return "#DC2626"; // Rojo
+}
+
+function getPocketIconName(pocketName: string): string {
+  const lower = String(pocketName || "").toLowerCase();
+  if (lower.includes("viaj")) return "airplane";
+  if (lower.includes("aliment") || lower.includes("comid")) return "food";
+  if (lower.includes("salu") || lower.includes("medic")) return "hospital-box";
+  if (lower.includes("educ") || lower.includes("escuel")) return "book";
+  if (lower.includes("trans") || lower.includes("auto") || lower.includes("moto")) return "car";
+  if (lower.includes("casa") || lower.includes("hogar") || lower.includes("rent")) return "home";
+  if (lower.includes("entret") || lower.includes("diver")) return "gamepad-variant";
+  if (lower.includes("ahorr")) return "piggy-bank";
+  if (lower.includes("gast")) return "cash";
+  return "wallet";
+}
 
 function formatPeriodName(periodValue: string) {
   const match = /^(\d{4})-(\d{2})$/.exec(periodValue.trim());

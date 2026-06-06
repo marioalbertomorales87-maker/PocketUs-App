@@ -556,6 +556,26 @@ export async function createFamilyMember(
   return memberId;
 }
 
+export type UpdateFamilyMemberInput = Partial<Pick<CreateFamilyMemberInput, "name" | "bank" | "contract" | "state">>;
+
+export async function updateFamilyMember(
+  familyIdRaw: string,
+  memberIdRaw: string,
+  input: UpdateFamilyMemberInput
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const memberId = String(memberIdRaw || "").trim();
+  if (!familyId) {
+    throw new Error("FAMILY_ID_REQUIRED");
+  }
+  if (!memberId) {
+    throw new Error("MEMBER_ID_REQUIRED");
+  }
+
+  const memberRef = doc(db, "families", familyId, "members", memberId);
+  await setDoc(memberRef, input, { merge: true });
+}
+
 export async function createFamilyPeriod(
   familyIdRaw: string,
   input: CreateFamilyPeriodInput
@@ -1026,6 +1046,146 @@ export async function createFamilyInitialIncome(
   }
 
   return incomeId;
+}
+
+export async function updateFamilyInitialIncome(
+  familyIdRaw: string,
+  periodIdRaw: string,
+  memberIdRaw: string,
+  newRealValueRaw: number
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const periodId = normalizePeriodId(String(periodIdRaw || ""));
+  const memberId = String(memberIdRaw || "").trim();
+  const newRealValue = Number(newRealValueRaw);
+
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!periodId) throw new Error("PERIOD_ID_REQUIRED");
+  if (!memberId) throw new Error("MEMBER_ID_REQUIRED");
+  if (!Number.isFinite(newRealValue)) throw new Error("INVALID_VALUE");
+
+  const cycleRef = doc(db, "families", familyId, "cycles", periodId);
+  const cycleSnap = await getDoc(cycleRef);
+  if (!cycleSnap.exists()) throw new Error("PERIOD_NOT_FOUND");
+
+  const incomesRef = collection(db, "families", familyId, "cycles", periodId, "incomes");
+  const incomeQuery = query(incomesRef, where("memberId", "==", memberId), limit(1));
+  const incomeSnap = await getDocs(incomeQuery);
+  if (incomeSnap.empty) throw new Error("MEMBER_INCOME_NOT_FOUND");
+
+  const incomeDoc = incomeSnap.docs[0];
+  const currentReal = Number(incomeDoc.data().realValue || 0);
+  const delta = newRealValue - currentReal;
+
+  const movementsRef = collection(db, "families", familyId, "cycles", periodId, "movements");
+  const movementQuery = query(
+    movementsRef,
+    where("movementType", "==", "INGRESO"),
+    where("originType", "==", "MIEMBRO"),
+    where("referenceOrigin", "==", memberId),
+    limit(1)
+  );
+  const movementSnap = await getDocs(movementQuery);
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  batch.set(incomeDoc.ref, {
+    realValue: newRealValue,
+    pocketsValue: newRealValue,
+    updatedAt: now,
+  }, { merge: true });
+
+  if (!movementSnap.empty) {
+    const movementDoc = movementSnap.docs[0];
+    batch.set(movementDoc.ref, {
+      value: newRealValue,
+      updatedAt: now,
+    }, { merge: true });
+  }
+
+  if (delta !== 0) {
+    const currentExpected = Number(cycleSnap.data().expectedTotalIncome || 0);
+    const nextExpected = currentExpected + delta;
+    batch.set(cycleRef, { expectedTotalIncome: nextExpected, updatedAt: now }, { merge: true });
+  }
+
+  await batch.commit();
+
+  if (delta !== 0) {
+    const nextExpected = Number(cycleSnap.data().expectedTotalIncome || 0) + delta;
+    await recalculateRemainingPocketForExpectedIncome(familyId, nextExpected);
+  }
+}
+
+export async function deleteFamilyMemberCascade(familyIdRaw: string, memberIdRaw: string): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const memberId = String(memberIdRaw || "").trim();
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!memberId) throw new Error("MEMBER_ID_REQUIRED");
+
+  const cyclesSnap = await getDocs(collection(db, "families", familyId, "cycles"));
+
+  for (const cycleDoc of cyclesSnap.docs) {
+    const periodId = cycleDoc.id;
+    // remove incomes for member and adjust expectedTotalIncome
+    const incomesRef = collection(db, "families", familyId, "cycles", periodId, "incomes");
+    const incomeQuery = query(incomesRef, where("memberId", "==", memberId));
+    const incomeSnap = await getDocs(incomeQuery);
+    let removedIncomeTotal = 0;
+    const batch = writeBatch(db);
+    const now = serverTimestamp();
+
+    for (const inc of incomeSnap.docs) {
+      const val = Number(inc.data().realValue || inc.data().pocketsValue || 0);
+      removedIncomeTotal += Number.isFinite(val) ? val : 0;
+      batch.delete(inc.ref);
+    }
+
+    // remove movements referencing member
+    const movementsRef = collection(db, "families", familyId, "cycles", periodId, "movements");
+    const movQuery1 = query(movementsRef, where("originType", "==", "MIEMBRO"));
+    const movSnap1 = await getDocs(movQuery1);
+    for (const m of movSnap1.docs) {
+      if (String(m.data().referenceOrigin || "") === memberId) {
+        batch.delete(m.ref);
+      }
+    }
+    const movQuery2 = query(movementsRef, where("destinationType", "==", "MIEMBRO"));
+    const movSnap2 = await getDocs(movQuery2);
+    for (const m of movSnap2.docs) {
+      if (String(m.data().referenceDestination || "") === memberId) {
+        batch.delete(m.ref);
+      }
+    }
+
+    // delete commitments for member
+    const commitmentsRef = collection(db, "families", familyId, "commitments");
+    const commitQuery = query(commitmentsRef, where("commitmentOriginType", "==", "MIEMBRO"), where("originId", "==", memberId));
+    const commitSnap = await getDocs(commitQuery);
+    for (const c of commitSnap.docs) {
+      batch.delete(c.ref);
+    }
+
+    if (removedIncomeTotal > 0) {
+      const currentExpected = Number(cycleDoc.data().expectedTotalIncome || 0);
+      const nextExpected = currentExpected - removedIncomeTotal;
+      const cycleRef = doc(db, "families", familyId, "cycles", periodId);
+      batch.set(cycleRef, { expectedTotalIncome: nextExpected, updatedAt: now }, { merge: true });
+    }
+
+    await batch.commit();
+
+    if (removedIncomeTotal > 0) {
+      const currentExpected = Number(cycleDoc.data().expectedTotalIncome || 0);
+      const nextExpected = currentExpected - removedIncomeTotal;
+      await recalculateRemainingPocketForExpectedIncome(familyId, nextExpected);
+    }
+  }
+
+  // finally delete member doc
+  const memberRef = doc(db, "families", familyId, "members", memberId);
+  await deleteDoc(memberRef).catch(() => {});
 }
 
 async function deleteDirectSubcollectionDocs(familyId: string, subcollectionName: string) {
