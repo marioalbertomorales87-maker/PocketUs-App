@@ -87,7 +87,11 @@ export default function App() {
           )}
 
           {phase === "dashboard" && workspace && (
-            <DashboardScreen workspace={workspace} onBackToFamilies={goBackToFamilies} />
+            <DashboardScreen
+              workspace={workspace}
+              currentUserEmail={String(user?.email || "")}
+              onBackToFamilies={goBackToFamilies}
+            />
           )}
 
           <StatusBar style={materialTheme.dark ? "light" : "dark"} />

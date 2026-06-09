@@ -1,6 +1,7 @@
 import { useState } from "react"
-import { StyleSheet, View } from "react-native"
+import { StyleSheet } from "react-native"
 import { Button, Surface, Text } from "react-native-paper"
+import Svg, { Path } from "react-native-svg"
 import {
     GoogleSignin,
     statusCodes,
@@ -83,7 +84,26 @@ export default function BtnLoginGoogle() {
         <Surface style={styles.container} elevation={1}>
             <Button
                 mode="contained"
-                icon="google"
+                icon={() => (
+                    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                        <Path
+                            d="M23.766 12.276c0-.815-.067-1.636-.211-2.44H12.24v4.621h6.482a5.54 5.54 0 0 1-2.4 3.637v3h3.87c2.273-2.092 3.573-5.178 3.573-8.818Z"
+                            fill="#4285F4"
+                        />
+                        <Path
+                            d="M12.24 24c3.236 0 5.965-1.062 7.954-2.906l-3.87-3c-1.076.732-2.45 1.147-4.084 1.147-3.133 0-5.792-2.114-6.742-4.96H1.505v3.09A12.008 12.008 0 0 0 12.24 24Z"
+                            fill="#34A853"
+                        />
+                        <Path
+                            d="M5.498 14.281A7.206 7.206 0 0 1 5.125 12c0-.798.138-1.573.373-2.281V6.628H1.505A12.01 12.01 0 0 0 0 12c0 1.933.463 3.76 1.505 5.372l3.993-3.09Z"
+                            fill="#FBBC05"
+                        />
+                        <Path
+                            d="M12.24 4.759c1.72 0 3.255.59 4.474 1.746l3.33-3.33C18.2 1.46 15.477 0 12.24 0A12.008 12.008 0 0 0 1.505 6.628l3.993 3.09c.95-2.846 3.61-4.959 6.742-4.959Z"
+                            fill="#EA4335"
+                        />
+                    </Svg>
+                )}
                 style={styles.btn}
                 contentStyle={styles.buttonContent}
                 disabled={cargando}

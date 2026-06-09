@@ -49,6 +49,7 @@ export type DashboardData = {
 
 export type CreateFamilyMemberInput = {
   name: string;
+  emailMember: string;
   bank: string;
   contract: string;
   state: "ACTIVE" | "INACTIVE";
@@ -77,6 +78,9 @@ export type CreateFamilyCommitmentInput = {
   endedDate: string | null;
   period: "MENSUAL" | "BIMESTRAL" | "TRIMESTRAL" | "SEMESTRAL" | "ANUAL" | "UNICO";
 };
+
+export type UpdateFamilyCommitmentInput = Partial<CreateFamilyCommitmentInput>;
+export type UpdateFamilyPocketInput = Partial<CreateFamilyPocketInput>;
 
 export type CreateFamilyPocketBalanceInput = {
   periodId: string;
@@ -128,10 +132,6 @@ function mapRoleFromDb(rawRole: unknown): "owner" | "member" {
   return "member";
 }
 
-function mapRoleToDb(role: "owner" | "member"): "OWNER" | "MEMBER" {
-  return role === "owner" ? "OWNER" : "MEMBER";
-}
-
 function resolveUserId(user: AuthenticatedUser) {
   const id = String(user.id || "").trim();
   if (id) return id;
@@ -145,6 +145,14 @@ function normalizePeriodId(periodIdRaw: string) {
   }
 
   return `${match[1]}-${match[2]}`;
+}
+
+function getCycleStateUpper(data: Record<string, unknown>) {
+  const directState = String(data.state || "").trim();
+  const nestedIdCycle = data.id_cycle as { state?: unknown } | undefined;
+  const nestedIdCycleAlt = data.idCycle as { state?: unknown } | undefined;
+  const nestedState = String(nestedIdCycle?.state || nestedIdCycleAlt?.state || "").trim();
+  return String(directState || nestedState).toUpperCase();
 }
 
 async function ensureUserProfile(user: AuthenticatedUser): Promise<string> {
@@ -218,13 +226,6 @@ async function getPendingCommitmentsDocs(familyId: string) {
   return snap.docs;
 }
 
-async function getRecentMovementsDocs(familyId: string) {
-  const ref = collection(db, "families", familyId, "movements");
-  const q = query(ref, orderBy("createdAt", "desc"), limit(20));
-  const snap = await getDocs(q);
-  return snap.docs;
-}
-
 async function getCycleMovementsDocs(familyId: string, periodId: string) {
   const ref = collection(db, "families", familyId, "cycles", periodId, "movements");
   const q = query(ref, orderBy("createdAt", "desc"), limit(200));
@@ -246,6 +247,13 @@ async function getCycleIncomesDocs(familyId: string, periodId: string) {
   return snap.docs;
 }
 
+async function getCyclePocketBalancesDocs(familyId: string, periodId: string) {
+  const ref = collection(db, "families", familyId, "cycles", periodId, "pocketBalances");
+  const q = query(ref, orderBy("createdAt", "desc"), limit(300));
+  const snap = await getDocs(q);
+  return snap.docs;
+}
+
 // Compatibilidad con naming de GAS para mantener el modelo de vistas/modales.
 export async function getFamilyDashboard(familyId: string): Promise<DashboardData> {
   const familyRef = doc(db, "families", familyId);
@@ -258,7 +266,7 @@ export async function getFamilyDashboard(familyId: string): Promise<DashboardDat
   const familyData = familySnap.data();
   const familyName = String(familyData.name || "").trim() || "Familia";
 
-  const [members, pockets, commitments, periods] = await Promise.all([
+  const [, pockets, commitments, periods] = await Promise.all([
     getActiveDocsByState(familyId, "members"),
     getActiveDocsByState(familyId, "pockets"),
     getPendingCommitmentsDocs(familyId),
@@ -273,6 +281,9 @@ export async function getFamilyDashboard(familyId: string): Promise<DashboardDat
     return state === "ACTIVO" || state === "ABIERTO";
   });
   const currentCycle = activeCycle ?? plannedCycle;
+  if (currentCycle) {
+    await removeInitializationIncomeMovements(familyId, currentCycle.id);
+  }
   const movements = currentCycle ? await getCycleMovementsDocs(familyId, currentCycle.id) : [];
 
   const templates = pockets.slice(0, 3).map((docSnap) => {
@@ -308,8 +319,12 @@ export async function getFamilyViewData(familyId: string, viewName: FamilyViewNa
     return state === "ACTIVO" || state === "ABIERTO";
   });
   const currentCycle = activeCycle ?? plannedCycle;
+  if (currentCycle) {
+    await removeInitializationIncomeMovements(familyId, currentCycle.id);
+  }
   const movements = currentCycle ? await getCycleMovementsDocs(familyId, currentCycle.id) : [];
   const incomes = currentCycle ? await getCycleIncomesDocs(familyId, currentCycle.id) : [];
+  const pocketBalances = currentCycle ? await getCyclePocketBalancesDocs(familyId, currentCycle.id) : [];
 
   if (viewName === "bolsas") {
     return {
@@ -318,16 +333,18 @@ export async function getFamilyViewData(familyId: string, viewName: FamilyViewNa
       commitments: commitments.map((d) => ({ id: d.id, ...d.data() })),
       periods: periods.map((d) => ({ id: d.id, ...d.data() })),
       incomes: incomes.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", ...d.data() })),
+      pocketBalances: pocketBalances.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", ...d.data() })),
     };
   }
 
   if (viewName === "movimientos" || viewName === "historial") {
     return {
-      movements: movements.map((d) => ({ id: d.id, ...d.data() })),
+      movements: movements.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", periodId: currentCycle?.id || "", ...d.data() })),
       members: members.map((d) => ({ id: d.id, ...d.data() })),
       pockets: pockets.map((d) => ({ id: d.id, ...d.data() })),
       periods: periods.map((d) => ({ id: d.id, ...d.data() })),
       incomes: incomes.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", ...d.data() })),
+      pocketBalances: pocketBalances.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", ...d.data() })),
     };
   }
 
@@ -335,9 +352,10 @@ export async function getFamilyViewData(familyId: string, viewName: FamilyViewNa
     members: members.map((d) => ({ id: d.id, ...d.data() })),
     pockets: pockets.map((d) => ({ id: d.id, ...d.data() })),
     commitments: commitments.map((d) => ({ id: d.id, ...d.data() })),
-    movements: movements.map((d) => ({ id: d.id, ...d.data() })),
+    movements: movements.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", periodId: currentCycle?.id || "", ...d.data() })),
     periods: periods.map((d) => ({ id: d.id, ...d.data() })),
     incomes: incomes.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", ...d.data() })),
+    pocketBalances: pocketBalances.map((d) => ({ id: d.id, cycleId: currentCycle?.id || "", ...d.data() })),
   };
 }
 
@@ -532,11 +550,12 @@ export async function createFamilyMember(
   }
 
   const name = String(input.name || "").trim();
+  const emailMember = String(input.emailMember || "").trim();
   const bank = String(input.bank || "").trim();
   const contract = String(input.contract || "").trim();
   const state = input.state === "INACTIVE" ? "INACTIVE" : "ACTIVE";
 
-  if (!name || !bank || !contract) {
+  if (!name || !emailMember || !bank || !contract) {
     throw new Error("MEMBER_FIELDS_REQUIRED");
   }
 
@@ -546,14 +565,36 @@ export async function createFamilyMember(
 
   await setDoc(memberRef, {
     name,
+    emailMember,
     bank,
     contract,
     state,
+    stateCycle: "PLANIFICADO",
     createdAt: now,
     updatedAt: now,
   });
 
   return memberId;
+}
+
+export type UpdateFamilyMemberInput = Partial<Pick<CreateFamilyMemberInput, "name" | "emailMember" | "bank" | "contract" | "state">>;
+
+export async function updateFamilyMember(
+  familyIdRaw: string,
+  memberIdRaw: string,
+  input: UpdateFamilyMemberInput
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const memberId = String(memberIdRaw || "").trim();
+  if (!familyId) {
+    throw new Error("FAMILY_ID_REQUIRED");
+  }
+  if (!memberId) {
+    throw new Error("MEMBER_ID_REQUIRED");
+  }
+
+  const memberRef = doc(db, "families", familyId, "members", memberId);
+  await setDoc(memberRef, input, { merge: true });
 }
 
 export async function createFamilyPeriod(
@@ -663,12 +704,12 @@ export async function createFamilyPocket(
       return acc + rowValueRule;
     }, 0);
 
-    valueRule = expectedTotalIncome - distributed;
-    if (!Number.isFinite(valueRule) || valueRule < 0) {
-      throw new Error("INVALID_REMAINING_POCKET_VALUE");
-    }
+    const calculatedRemaining = expectedTotalIncome - distributed;
+    valueRule = Number.isFinite(calculatedRemaining) ? Math.max(0, calculatedRemaining) : 0;
   } else if (!Number.isFinite(valueRule)) {
     throw new Error("POCKET_FIELDS_REQUIRED");
+  } else {
+    valueRule = Math.max(0, valueRule);
   }
 
   const pocketId = Crypto.randomUUID();
@@ -737,7 +778,224 @@ export async function createFamilyCommitment(
     updatedAt: now,
   });
 
+  if (commitmentOriginType === "MIEMBRO") {
+    const periodId = await resolveBudgetCycleIdForCommitmentImpact(familyId);
+    await applyMemberCommitmentDeltaToIncome(familyId, periodId, originId, -estimatedValue);
+    await finalizeCommitmentIncomeImpact(familyId, periodId);
+  }
+
   return commitmentId;
+}
+
+async function assertPlannedCycleForAction(familyId: string, periodIdRaw: string) {
+  const periodId = normalizePeriodId(periodIdRaw);
+  const periodRef = doc(db, "families", familyId, "cycles", periodId);
+  const periodSnap = await getDoc(periodRef);
+  if (!periodSnap.exists()) {
+    throw new Error("PERIOD_NOT_FOUND");
+  }
+
+  const state = getCycleStateUpper(periodSnap.data() as Record<string, unknown>);
+  if (state !== "PLANIFICADO") {
+    throw new Error("ONLY_PLANNED_CYCLE_ALLOWS_DELETE_OR_UPDATE");
+  }
+
+  return periodId;
+}
+
+export async function updateFamilyCommitment(
+  familyIdRaw: string,
+  commitmentIdRaw: string,
+  periodIdRaw: string,
+  input: UpdateFamilyCommitmentInput
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const commitmentId = String(commitmentIdRaw || "").trim();
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!commitmentId) throw new Error("COMMITMENT_ID_REQUIRED");
+
+  if (String(periodIdRaw || "").trim()) {
+    normalizePeriodId(String(periodIdRaw || ""));
+  }
+
+  const payload: Record<string, unknown> = {
+    updatedAt: serverTimestamp(),
+  };
+
+  if (input.commitmentOriginType) payload.commitmentOriginType = input.commitmentOriginType;
+  if (input.originId !== undefined) payload.originId = String(input.originId || "").trim();
+  if (input.commitmentConcept !== undefined) payload.commitmentConcept = String(input.commitmentConcept || "").trim();
+  if (input.reference !== undefined) payload.reference = String(input.reference || "").trim();
+  if (input.estimatedValue !== undefined) {
+    const value = Number(input.estimatedValue);
+    if (!Number.isFinite(value)) throw new Error("COMMITMENT_FIELDS_REQUIRED");
+    payload.estimatedValue = value;
+  }
+  if (input.endedDate !== undefined) {
+    payload.endedDate = input.endedDate ? String(input.endedDate).trim() : null;
+  }
+  if (input.period) payload.period = input.period;
+
+  const commitmentRef = doc(db, "families", familyId, "commitments", commitmentId);
+  const commitmentSnap = await getDoc(commitmentRef);
+  if (!commitmentSnap.exists()) {
+    throw new Error("COMMITMENT_NOT_FOUND");
+  }
+
+  const currentCommitment = commitmentSnap.data();
+  const currentOriginType = String(currentCommitment.commitmentOriginType || "").toUpperCase();
+  const currentOriginId = String(currentCommitment.originId || "").trim();
+  const currentEstimatedValue = Number(currentCommitment.estimatedValue || 0);
+
+  const nextOriginType = String(
+    input.commitmentOriginType !== undefined
+      ? input.commitmentOriginType
+      : currentCommitment.commitmentOriginType || ""
+  ).toUpperCase();
+  const nextOriginId = String(
+    input.originId !== undefined ? input.originId : currentCommitment.originId || ""
+  ).trim();
+  const nextEstimatedValue = Number(
+    input.estimatedValue !== undefined ? input.estimatedValue : currentCommitment.estimatedValue || 0
+  );
+
+  await setDoc(commitmentRef, payload, { merge: true });
+
+  const requiresIncomeAdjustment = currentOriginType === "MIEMBRO" || nextOriginType === "MIEMBRO";
+  if (requiresIncomeAdjustment) {
+    const periodId = await resolveBudgetCycleIdForCommitmentImpact(familyId);
+
+    if (currentOriginType === "MIEMBRO" && currentOriginId) {
+      await applyMemberCommitmentDeltaToIncome(
+        familyId,
+        periodId,
+        currentOriginId,
+        Math.max(0, Number.isFinite(currentEstimatedValue) ? currentEstimatedValue : 0)
+      );
+    }
+
+    if (nextOriginType === "MIEMBRO" && nextOriginId) {
+      await applyMemberCommitmentDeltaToIncome(
+        familyId,
+        periodId,
+        nextOriginId,
+        -Math.max(0, Number.isFinite(nextEstimatedValue) ? nextEstimatedValue : 0)
+      );
+    }
+
+    await finalizeCommitmentIncomeImpact(familyId, periodId);
+  }
+}
+
+export async function deleteFamilyCommitment(
+  familyIdRaw: string,
+  commitmentIdRaw: string,
+  periodIdRaw: string
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const commitmentId = String(commitmentIdRaw || "").trim();
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!commitmentId) throw new Error("COMMITMENT_ID_REQUIRED");
+
+  await assertPlannedCycleForAction(familyId, periodIdRaw);
+
+  const commitmentRef = doc(db, "families", familyId, "commitments", commitmentId);
+  const commitmentSnap = await getDoc(commitmentRef);
+  if (!commitmentSnap.exists()) {
+    throw new Error("COMMITMENT_NOT_FOUND");
+  }
+
+  const commitmentData = commitmentSnap.data();
+  const commitmentOriginType = String(commitmentData.commitmentOriginType || "").toUpperCase();
+  const commitmentOriginId = String(commitmentData.originId || "").trim();
+  const commitmentEstimatedValue = Number(commitmentData.estimatedValue || 0);
+
+  await deleteDoc(commitmentRef);
+
+  if (commitmentOriginType === "MIEMBRO" && commitmentOriginId) {
+    const periodId = await resolveBudgetCycleIdForCommitmentImpact(familyId);
+    await applyMemberCommitmentDeltaToIncome(
+      familyId,
+      periodId,
+      commitmentOriginId,
+      Math.max(0, Number.isFinite(commitmentEstimatedValue) ? commitmentEstimatedValue : 0)
+    );
+    await finalizeCommitmentIncomeImpact(familyId, periodId);
+  }
+}
+
+export async function updateFamilyPocket(
+  familyIdRaw: string,
+  pocketIdRaw: string,
+  periodIdRaw: string,
+  input: UpdateFamilyPocketInput
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const pocketId = String(pocketIdRaw || "").trim();
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!pocketId) throw new Error("POCKET_ID_REQUIRED");
+
+  if (String(periodIdRaw || "").trim()) {
+    normalizePeriodId(String(periodIdRaw || ""));
+  }
+
+  const payload: Record<string, unknown> = {
+    updatedAt: serverTimestamp(),
+  };
+
+  if (input.name !== undefined) payload.name = String(input.name || "").trim();
+  if (input.bank !== undefined) payload.bank = String(input.bank || "").trim();
+  if (input.contract !== undefined) payload.contract = String(input.contract || "").trim();
+  if (input.typeRule) payload.typeRule = input.typeRule;
+  if (input.valueRule !== undefined) {
+    const value = Number(input.valueRule);
+    if (!Number.isFinite(value)) throw new Error("POCKET_FIELDS_REQUIRED");
+    payload.valueRule = Math.max(0, value);
+  }
+  if (input.category) payload.category = input.category;
+
+  const pocketRef = doc(db, "families", familyId, "pockets", pocketId);
+  const pocketSnap = await getDoc(pocketRef);
+  if (!pocketSnap.exists()) {
+    throw new Error("POCKET_NOT_FOUND");
+  }
+
+  await setDoc(pocketRef, payload, { merge: true });
+}
+
+export async function deleteFamilyPocketCascade(
+  familyIdRaw: string,
+  pocketIdRaw: string,
+  periodIdRaw: string
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const pocketId = String(pocketIdRaw || "").trim();
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!pocketId) throw new Error("POCKET_ID_REQUIRED");
+
+  await assertPlannedCycleForAction(familyId, periodIdRaw);
+
+  const pocketRef = doc(db, "families", familyId, "pockets", pocketId);
+  const pocketSnap = await getDoc(pocketRef);
+  if (!pocketSnap.exists()) {
+    throw new Error("POCKET_NOT_FOUND");
+  }
+
+  const commitmentsRef = collection(db, "families", familyId, "commitments");
+  const commitmentsQuery = query(
+    commitmentsRef,
+    where("commitmentOriginType", "==", "BOLSA"),
+    where("originId", "==", pocketId)
+  );
+  const commitmentsSnap = await getDocs(commitmentsQuery);
+
+  const batch = writeBatch(db);
+  for (const commitmentDoc of commitmentsSnap.docs) {
+    batch.delete(commitmentDoc.ref);
+  }
+  batch.delete(pocketRef);
+
+  await batch.commit();
 }
 
 export async function createFamilyPocketBalance(
@@ -817,18 +1075,79 @@ async function recalculateRemainingPocketForExpectedIncome(
   }, 0);
 
   const remainingValue = expectedTotalIncome - distributed;
-  if (!Number.isFinite(remainingValue) || remainingValue < 0) {
-    throw new Error("INVALID_REMAINING_POCKET_VALUE");
-  }
+  const safeRemainingValue = Number.isFinite(remainingValue)
+    ? Math.max(0, remainingValue)
+    : 0;
 
   await setDoc(
     remainingPocketDoc.ref,
     {
-      valueRule: remainingValue,
+      valueRule: safeRemainingValue,
       updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
+}
+
+async function recalculateExpectedTotalIncomeFromIncomes(
+  familyId: string,
+  periodId: string
+): Promise<number> {
+  const incomesRef = collection(db, "families", familyId, "cycles", periodId, "incomes");
+  const incomesSnap = await getDocs(incomesRef);
+
+  const nextExpectedTotalIncome = incomesSnap.docs.reduce((acc, incomeDoc) => {
+    const pocketsValue = Number(incomeDoc.data().pocketsValue ?? 0);
+    if (!Number.isFinite(pocketsValue)) return acc;
+    return acc + Math.max(0, pocketsValue);
+  }, 0);
+
+  const cycleRef = doc(db, "families", familyId, "cycles", periodId);
+  await setDoc(
+    cycleRef,
+    {
+      expectedTotalIncome: nextExpectedTotalIncome,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return nextExpectedTotalIncome;
+}
+
+async function removeInitializationIncomeMovements(
+  familyId: string,
+  periodId: string,
+  memberId?: string
+): Promise<void> {
+  const movementsRef = collection(db, "families", familyId, "cycles", periodId, "movements");
+  const movementsSnap = await getDocs(query(movementsRef, orderBy("createdAt", "desc"), limit(500)));
+
+  const rowsToDelete = movementsSnap.docs.filter((row) => {
+    const data = row.data();
+    const movementType = String(data.movementType || "").trim().toUpperCase();
+    const originType = String(data.originType || "").trim().toUpperCase();
+    const referenceDestination = String(data.referenceDestination || "").trim().toUpperCase();
+    const referenceOrigin = String(data.referenceOrigin || "").trim();
+    const concept = String(data.movementConcept || "").trim().toUpperCase();
+
+    const isInitializationIncome =
+      movementType === "INGRESO" &&
+      originType === "MIEMBRO" &&
+      (referenceDestination === "INICIALIZACION" || concept === "INGRESO INICIAL");
+
+    if (!isInitializationIncome) return false;
+    if (!memberId) return true;
+    return referenceOrigin === memberId;
+  });
+
+  if (rowsToDelete.length === 0) return;
+
+  const batch = writeBatch(db);
+  for (const row of rowsToDelete) {
+    batch.delete(row.ref);
+  }
+  await batch.commit();
 }
 
 export async function createFamilyMovement(
@@ -848,7 +1167,7 @@ export async function createFamilyMovement(
 
   const movementConcept = String(input.movementConcept || "").trim();
   const periodId = normalizePeriodId(input.periodId);
-  const movementType = input.movementType;
+  const movementType = String(input.movementType || "").trim().toUpperCase();
   const value = Number(input.value);
   const originType = input.originType;
   const referenceOrigin = String(input.referenceOrigin || "").trim();
@@ -859,15 +1178,19 @@ export async function createFamilyMovement(
     throw new Error("MOVEMENT_FIELDS_REQUIRED");
   }
 
+  if (movementType !== "INGRESO" && movementType !== "COMPROMISO" && movementType !== "RESERVADO" && movementType !== "GASTO") {
+    throw new Error("MOVEMENT_TYPE_NOT_ALLOWED");
+  }
+
   const periodRef = doc(db, "families", familyId, "cycles", periodId);
   const periodSnap = await getDoc(periodRef);
   if (!periodSnap.exists()) {
     throw new Error("PERIOD_NOT_FOUND");
   }
 
-  const periodState = String(periodSnap.data().state || "").toUpperCase();
-  if ((movementType === "INGRESO" || movementType === "RESERVADO") && periodState !== "PLANIFICADO") {
-    throw new Error("ONLY_PLANNED_CYCLE_ALLOWS_INGRESO_OR_RESERVADO");
+  const periodState = getCycleStateUpper(periodSnap.data() as Record<string, unknown>);
+  if (periodState === "PLANIFICADO") {
+    throw new Error("PLANNED_CYCLE_BLOCKS_MOVEMENTS");
   }
 
   const movementId = Crypto.randomUUID();
@@ -875,7 +1198,6 @@ export async function createFamilyMovement(
   const movementRef = doc(db, "families", familyId, "cycles", periodId, "movements", movementId);
 
   const batch = writeBatch(db);
-  let nextExpectedTotalIncome: number | null = null;
 
   batch.set(movementRef, {
     movementConcept,
@@ -889,57 +1211,7 @@ export async function createFamilyMovement(
     updatedAt: now,
   });
 
-  if (movementType === "INGRESO") {
-    const currentExpectedTotalIncome = Number(periodSnap.data().expectedTotalIncome || 0);
-    nextExpectedTotalIncome = currentExpectedTotalIncome + value;
-
-    batch.set(periodRef, {
-      expectedTotalIncome: nextExpectedTotalIncome,
-      updatedAt: now,
-    }, { merge: true });
-  }
-
-  if (movementType === "RESERVADO") {
-    const currentExpectedTotalIncome = Number(periodSnap.data().expectedTotalIncome || 0);
-    nextExpectedTotalIncome = currentExpectedTotalIncome - value;
-
-    batch.set(periodRef, {
-      expectedTotalIncome: nextExpectedTotalIncome,
-      updatedAt: now,
-    }, { merge: true });
-
-    const reservedMemberId = destinationType === "MIEMBRO"
-      ? referenceDestination
-      : originType === "MIEMBRO"
-        ? referenceOrigin
-        : "";
-
-    if (!reservedMemberId) {
-      throw new Error("RESERVED_MEMBER_REQUIRED");
-    }
-
-    const incomesRef = collection(db, "families", familyId, "cycles", periodId, "incomes");
-    const incomeQuery = query(incomesRef, where("memberId", "==", reservedMemberId), limit(1));
-    const incomeSnap = await getDocs(incomeQuery);
-
-    if (incomeSnap.empty) {
-      throw new Error("MEMBER_INCOME_NOT_FOUND");
-    }
-
-    const incomeDoc = incomeSnap.docs[0];
-    const currentPocketsValue = Number(incomeDoc.data().pocketsValue || 0);
-
-    batch.set(incomeDoc.ref, {
-      pocketsValue: currentPocketsValue - value,
-      updatedAt: now,
-    }, { merge: true });
-  }
-
   await batch.commit();
-
-  if (nextExpectedTotalIncome !== null) {
-    await recalculateRemainingPocketForExpectedIncome(familyId, nextExpectedTotalIncome);
-  }
 
   return movementId;
 }
@@ -983,13 +1255,10 @@ export async function createFamilyInitialIncome(
   }
 
   const incomeId = Crypto.randomUUID();
-  const movementId = Crypto.randomUUID();
   const now = serverTimestamp();
 
   const incomeRef = doc(db, "families", familyId, "cycles", periodId, "incomes", incomeId);
-  const movementRef = doc(db, "families", familyId, "cycles", periodId, "movements", movementId);
   const batch = writeBatch(db);
-  let nextExpectedTotalIncome: number | null = null;
 
   batch.set(incomeRef, {
     memberId,
@@ -999,33 +1268,180 @@ export async function createFamilyInitialIncome(
     updatedAt: now,
   });
 
-  batch.set(movementRef, {
-    movementConcept: "Ingreso Inicial",
-    movementType: "INGRESO",
-    value: realValue,
-    originType: "MIEMBRO",
-    referenceOrigin: memberId,
-    destinationType: "OTRO",
-    referenceDestination: "INICIALIZACION",
-    createdAt: now,
-    updatedAt: now,
-  });
+  await batch.commit();
 
-  const currentExpectedTotalIncome = Number(cycleSnap.data().expectedTotalIncome || 0);
-  nextExpectedTotalIncome = currentExpectedTotalIncome + realValue;
+  const nextExpectedTotalIncome = await recalculateExpectedTotalIncomeFromIncomes(familyId, periodId);
+  await recalculateRemainingPocketForExpectedIncome(familyId, nextExpectedTotalIncome);
+  await removeInitializationIncomeMovements(familyId, periodId, memberId);
 
-  batch.set(cycleRef, {
-    expectedTotalIncome: nextExpectedTotalIncome,
-    updatedAt: now,
-  }, { merge: true });
+  return incomeId;
+}
+
+export async function updateFamilyInitialIncome(
+  familyIdRaw: string,
+  periodIdRaw: string,
+  memberIdRaw: string,
+  newRealValueRaw: number
+): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const periodId = normalizePeriodId(String(periodIdRaw || ""));
+  const memberId = String(memberIdRaw || "").trim();
+  const newRealValue = Number(newRealValueRaw);
+
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!periodId) throw new Error("PERIOD_ID_REQUIRED");
+  if (!memberId) throw new Error("MEMBER_ID_REQUIRED");
+  if (!Number.isFinite(newRealValue)) throw new Error("INVALID_VALUE");
+
+  const cycleRef = doc(db, "families", familyId, "cycles", periodId);
+  const cycleSnap = await getDoc(cycleRef);
+  if (!cycleSnap.exists()) throw new Error("PERIOD_NOT_FOUND");
+
+  const incomesRef = collection(db, "families", familyId, "cycles", periodId, "incomes");
+  const incomeQuery = query(incomesRef, where("memberId", "==", memberId), limit(1));
+  const incomeSnap = await getDocs(incomeQuery);
+  const incomeDoc = incomeSnap.empty ? null : incomeSnap.docs[0];
+  const currentReal = incomeDoc ? Number(incomeDoc.data().realValue || 0) : 0;
+  const delta = newRealValue - currentReal;
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  if (incomeDoc) {
+    batch.set(incomeDoc.ref, {
+      realValue: newRealValue,
+      pocketsValue: newRealValue,
+      updatedAt: now,
+    }, { merge: true });
+  } else {
+    const incomeId = Crypto.randomUUID();
+    const incomeRef = doc(db, "families", familyId, "cycles", periodId, "incomes", incomeId);
+    batch.set(incomeRef, {
+      memberId,
+      realValue: newRealValue,
+      pocketsValue: newRealValue,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
 
   await batch.commit();
 
-  if (nextExpectedTotalIncome !== null) {
-    await recalculateRemainingPocketForExpectedIncome(familyId, nextExpectedTotalIncome);
+  await removeInitializationIncomeMovements(familyId, periodId, memberId);
+
+  if (delta !== 0) {
+    const nextExpected = await recalculateExpectedTotalIncomeFromIncomes(familyId, periodId);
+    await recalculateRemainingPocketForExpectedIncome(familyId, nextExpected);
+  }
+}
+
+async function resolveBudgetCycleIdForCommitmentImpact(familyId: string): Promise<string> {
+  const cyclesSnap = await getDocs(collection(db, "families", familyId, "cycles"));
+  const planned = cyclesSnap.docs.find((row) => String(row.data().state || "").toUpperCase() === "PLANIFICADO");
+  const active = cyclesSnap.docs.find((row) => {
+    const state = String(row.data().state || "").toUpperCase();
+    return state === "ACTIVO" || state === "ABIERTO";
+  });
+
+  const cycle = planned ?? active;
+  if (!cycle) {
+    throw new Error("PERIOD_NOT_FOUND");
   }
 
-  return incomeId;
+  return cycle.id;
+}
+
+async function applyMemberCommitmentDeltaToIncome(
+  familyId: string,
+  periodId: string,
+  memberId: string,
+  deltaValue: number
+): Promise<void> {
+  const safeDelta = Number(deltaValue);
+  if (!memberId) {
+    throw new Error("MEMBER_ID_REQUIRED");
+  }
+  if (!Number.isFinite(safeDelta) || safeDelta === 0) {
+    return;
+  }
+
+  const incomesRef = collection(db, "families", familyId, "cycles", periodId, "incomes");
+  const incomeQuery = query(incomesRef, where("memberId", "==", memberId), limit(1));
+  const incomeSnap = await getDocs(incomeQuery);
+
+  if (incomeSnap.empty) {
+    throw new Error("MEMBER_INCOME_NOT_FOUND");
+  }
+
+  const incomeDoc = incomeSnap.docs[0];
+  const currentPocketsValue = Number(incomeDoc.data().pocketsValue || 0);
+  const nextPocketsValue = Math.max(0, currentPocketsValue + safeDelta);
+
+  await setDoc(incomeDoc.ref, {
+    pocketsValue: nextPocketsValue,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+async function finalizeCommitmentIncomeImpact(familyId: string, periodId: string): Promise<void> {
+  const nextExpectedTotalIncome = await recalculateExpectedTotalIncomeFromIncomes(familyId, periodId);
+  await recalculateRemainingPocketForExpectedIncome(familyId, nextExpectedTotalIncome);
+}
+
+export async function deleteFamilyMemberCascade(familyIdRaw: string, memberIdRaw: string): Promise<void> {
+  const familyId = String(familyIdRaw || "").trim();
+  const memberId = String(memberIdRaw || "").trim();
+  if (!familyId) throw new Error("FAMILY_ID_REQUIRED");
+  if (!memberId) throw new Error("MEMBER_ID_REQUIRED");
+
+  const cyclesSnap = await getDocs(collection(db, "families", familyId, "cycles"));
+
+  for (const cycleDoc of cyclesSnap.docs) {
+    const periodId = cycleDoc.id;
+    // remove incomes for member
+    const incomesRef = collection(db, "families", familyId, "cycles", periodId, "incomes");
+    const incomeQuery = query(incomesRef, where("memberId", "==", memberId));
+    const incomeSnap = await getDocs(incomeQuery);
+    const batch = writeBatch(db);
+
+    for (const inc of incomeSnap.docs) {
+      batch.delete(inc.ref);
+    }
+
+    // remove movements referencing member
+    const movementsRef = collection(db, "families", familyId, "cycles", periodId, "movements");
+    const movQuery1 = query(movementsRef, where("originType", "==", "MIEMBRO"));
+    const movSnap1 = await getDocs(movQuery1);
+    for (const m of movSnap1.docs) {
+      if (String(m.data().referenceOrigin || "") === memberId) {
+        batch.delete(m.ref);
+      }
+    }
+    const movQuery2 = query(movementsRef, where("destinationType", "==", "MIEMBRO"));
+    const movSnap2 = await getDocs(movQuery2);
+    for (const m of movSnap2.docs) {
+      if (String(m.data().referenceDestination || "") === memberId) {
+        batch.delete(m.ref);
+      }
+    }
+
+    // delete commitments for member
+    const commitmentsRef = collection(db, "families", familyId, "commitments");
+    const commitQuery = query(commitmentsRef, where("commitmentOriginType", "==", "MIEMBRO"), where("originId", "==", memberId));
+    const commitSnap = await getDocs(commitQuery);
+    for (const c of commitSnap.docs) {
+      batch.delete(c.ref);
+    }
+
+    await batch.commit();
+
+    const nextExpected = await recalculateExpectedTotalIncomeFromIncomes(familyId, periodId);
+    await recalculateRemainingPocketForExpectedIncome(familyId, nextExpected);
+  }
+
+  // finally delete member doc
+  const memberRef = doc(db, "families", familyId, "members", memberId);
+  await deleteDoc(memberRef).catch(() => {});
 }
 
 async function deleteDirectSubcollectionDocs(familyId: string, subcollectionName: string) {
