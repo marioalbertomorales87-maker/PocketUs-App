@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { StyleSheet, View } from "react-native"
+import { StyleSheet } from "react-native"
 import { Button, Surface, Text } from "react-native-paper"
 import Svg, { Path } from "react-native-svg"
 import {

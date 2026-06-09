@@ -31,14 +31,13 @@ import {
   deleteFamilyPocketCascade,
   updateFamilyInitialIncome,
   deleteFamilyMemberCascade,
-  DashboardData,
   FamilyWorkspace,
   getFamilyViewData,
-  loadFamilyViewData,
 } from "../services/AuthService";
 
 type DashboardScreenProps = {
   workspace: FamilyWorkspace;
+  currentUserEmail: string;
   onBackToFamilies: () => void;
 };
 
@@ -63,7 +62,7 @@ type ModalKey =
 
 type MovementPartyType = "MIEMBRO" | "BOLSA" | "COMPROMISO" | "OTRO";
 
-export default function DashboardScreen({ workspace, onBackToFamilies }: DashboardScreenProps) {
+export default function DashboardScreen({ workspace, currentUserEmail, onBackToFamilies }: DashboardScreenProps) {
   const theme = useTheme();
   const colorScheme = useColorScheme();
   const isDarkMode = theme.dark || colorScheme === "dark";
@@ -127,12 +126,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     () => [styles.dropdownItemText, { color: isDarkMode ? "#F9FAFB" : theme.colors.onSurface }],
     [isDarkMode, theme.colors.onSurface]
   );
-  const dropdownItemDisabledStyle = useMemo(
-    () => [styles.dropdownItemDisabled, { backgroundColor: isDarkMode ? "#1F2937" : theme.colors.surfaceVariant, borderBottomColor: isDarkMode ? "#334155" : theme.colors.outlineVariant }],
-    [isDarkMode, theme.colors.surfaceVariant, theme.colors.outlineVariant]
-  );
-  const dropdownItemDisabledTextColor = isDarkMode ? "#94A3B8" : theme.colors.onSurfaceVariant;
-  const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>("inicio");
@@ -175,7 +168,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
   const [isSavingMember, setIsSavingMember] = useState(false);
   const [isSavingPeriod, setIsSavingPeriod] = useState(false);
   const [editIncomeValue, setEditIncomeValue] = useState("");
-  const [editIncomeId, setEditIncomeId] = useState<string | null>(null);
   const [isSavingEditIncome, setIsSavingEditIncome] = useState(false);
 
   const [pocketName, setPocketName] = useState("");
@@ -229,6 +221,7 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
   const [selectedMovementId, setSelectedMovementId] = useState<string | null>(null);
   const [selectedMovementSnapshot, setSelectedMovementSnapshot] = useState<(Record<string, unknown> & { id?: string }) | null>(null);
   const [movementReturnModal, setMovementReturnModal] = useState<ModalKey | null>(null);
+  const [commitmentReturnModal, setCommitmentReturnModal] = useState<ModalKey | null>(null);
   const selectedMember = useMemo(() => {
     const members = viewData?.members ?? [];
     if (!selectedMemberId) {
@@ -236,12 +229,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     }
     return members.find((item) => String(item.id || "") === selectedMemberId) ?? null;
   }, [selectedMemberId, viewData?.members]);
-
-  const selectedCommitment = useMemo(() => {
-    const commitments = viewData?.commitments ?? [];
-    if (!selectedCommitmentId) return null;
-    return commitments.find((item) => String(item.id || "") === selectedCommitmentId) ?? null;
-  }, [selectedCommitmentId, viewData?.commitments]);
 
   const selectedPocket = useMemo(() => {
     const pockets = viewData?.pockets ?? [];
@@ -322,9 +309,12 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
   }, [movementListFilter, viewData?.movements]);
 
   const selectedMemberCommitments = useMemo(() => {
-    if (!selectedMemberId) return [];
+    const memberId = String(selectedMemberId || "").trim();
+    if (!memberId) return [];
     return (viewData?.commitments ?? []).filter(
-      (item) => String(item.commitmentOriginType || "").toUpperCase() === "MIEMBRO" && String(item.originId || "") === selectedMemberId
+      (item) =>
+        String(item.commitmentOriginType || "").toUpperCase() === "MIEMBRO" &&
+        String(item.originId || "").trim() === memberId
     );
   }, [selectedMemberId, viewData?.commitments]);
 
@@ -334,12 +324,13 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     const run = async () => {
       try {
         setIsLoading(true);
-        const nextData = await loadFamilyViewData(workspace);
+        const nextData = await getFamilyViewData(workspace.familyId, activeTab);
         if (!isActive) return;
-        setData(nextData);
+        setViewData(nextData);
       } catch (error) {
         if (!isActive) return;
-        console.error("Dashboard loadFamilyViewData error:", error);
+        console.error("Dashboard getFamilyViewData error:", error);
+        setViewData(null);
       } finally {
         if (!isActive) return;
         setIsLoading(false);
@@ -350,27 +341,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
 
     return () => {
       isActive = false;
-    };
-  }, [workspace]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadViewData = async () => {
-      try {
-        const next = await getFamilyViewData(workspace.familyId, activeTab);
-        if (!isMounted) return;
-        setViewData(next);
-      } catch {
-        if (!isMounted) return;
-        setViewData(null);
-      }
-    };
-
-    loadViewData();
-
-    return () => {
-      isMounted = false;
     };
   }, [activeTab, workspace.familyId]);
 
@@ -406,34 +376,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     if (!normalized || normalized === ".") return NaN;
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? roundToTwoDecimals(parsed) : NaN;
-  };
-
-  const formatNumericInput = (value: string) => {
-    const normalized = normalizeNumericInput(value);
-    if (!normalized) return "";
-
-    const hasTrailingDot = normalized.endsWith(".");
-    const [integerPartRaw, decimalPartRaw = ""] = normalized.split(".");
-    const integerNumber = Number(integerPartRaw || "0");
-    const integerFormatted = Number.isFinite(integerNumber)
-      ? integerNumber.toLocaleString("es-CO", { maximumFractionDigits: 0 })
-      : "0";
-
-    if (hasTrailingDot) {
-      return `${integerFormatted},`;
-    }
-
-    return decimalPartRaw ? `${integerFormatted},${decimalPartRaw}` : integerFormatted;
-  };
-
-  const formatCurrencyInput = (value: string) => {
-    const formatted = formatNumericInput(value);
-    return formatted ? `$ ${formatted}` : "";
-  };
-
-  const formatPercentInput = (value: string) => {
-    const formatted = formatNumericInput(value);
-    return formatted ? `% ${formatted}` : "";
   };
 
   const toCurrency = (value: number) => {
@@ -546,8 +488,14 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     const state = String(item.state || "").toUpperCase();
     return state === "PENDIENTE" || state === "RESERVADO";
   });
-  const createdCommitments = viewData?.commitments ?? [];
-  const pendingCommitmentsTotal = pendingCommitments.reduce((acc, item) => {
+  const createdCommitments = (viewData?.commitments ?? []).filter(
+    (item) => String(item.commitmentOriginType || "").toUpperCase() === "BOLSA"
+  );
+  const pendingCreatedCommitments = createdCommitments.filter((item) => {
+    const state = String(item.state || "").toUpperCase();
+    return state === "PENDIENTE" || state === "RESERVADO";
+  });
+  const pendingCreatedCommitmentsTotal = pendingCreatedCommitments.reduce((acc, item) => {
     const value = Number(item.estimatedValue || 0);
     return roundToTwoDecimals(acc + (Number.isFinite(value) ? value : 0));
   }, 0);
@@ -759,7 +707,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     setMemberDetailSaveError(null);
     // preload income info for edit
     const income = (viewData?.incomes || []).find((inc) => String(inc.memberId || "") === memberId) ?? null;
-    setEditIncomeId(income ? String(income.id || "") : null);
     setEditIncomeValue(income ? normalizeNumericInput(String(roundToTwoDecimals(Number(income.realValue || income.pocketsValue || 0)))) : "");
     openModal("detailMember");
   };
@@ -767,6 +714,9 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
   const handleOpenCommitmentDetail = (commitmentId: string) => {
     const commitment = (viewData?.commitments ?? []).find((item) => String(item.id || "") === commitmentId) ?? null;
     if (!commitment) return;
+
+    const previousModal = activeModal === "detailMember" || activeModal === "detailBag" ? activeModal : null;
+    setCommitmentReturnModal(previousModal);
 
     const originType = String(commitment.commitmentOriginType || "").toUpperCase();
     const originId = String(commitment.originId || "");
@@ -786,7 +736,7 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     setCommitmentEstimatedValue(normalizeNumericInput(String(roundToTwoDecimals(Number(commitment.estimatedValue || 0)))));
     setCommitmentEndedDate(String(commitment.endedDate || ""));
     if (String(commitment.endedDate || "").trim()) {
-      const nextDate = new Date(String(commitment.endedDate));
+      const nextDate = parseStoredDate(String(commitment.endedDate));
       if (!Number.isNaN(nextDate.getTime())) {
         setCommitmentEndedDateValue(nextDate);
       }
@@ -1012,6 +962,14 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
   };
 
   const closeModal = () => {
+    if (activeModal === "detailCommitment" && commitmentReturnModal) {
+      setActiveModal(commitmentReturnModal);
+      setCommitmentReturnModal(null);
+      return;
+    }
+    if (activeModal === "detailCommitment") {
+      setCommitmentReturnModal(null);
+    }
     if (activeModal === "detailMovement" && movementReturnModal) {
       setActiveModal(movementReturnModal);
       setMovementReturnModal(null);
@@ -1026,12 +984,7 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
   };
 
   const refreshDashboard = async () => {
-    const [nextData, nextViewData] = await Promise.all([
-      loadFamilyViewData(workspace),
-      getFamilyViewData(workspace.familyId, activeTab),
-    ]);
-
-    setData(nextData);
+    const nextViewData = await getFamilyViewData(workspace.familyId, activeTab);
     setViewData(nextViewData);
   };
 
@@ -1250,9 +1203,9 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     const selectedCycle = (viewData?.periods ?? []).find(
       (period) => String(period.id || "") === movementPeriodId
     );
-    const selectedCycleState = String(selectedCycle?.state || "").toUpperCase();
-    if ((movementType === "INGRESO" || movementType === "RESERVADO") && selectedCycleState !== "PLANIFICADO") {
-      setMovementSubmitError("Solo puedes registrar INGRESO o RESERVADO en ciclos PLANIFICADOS.");
+    const selectedCycleState = String(selectedCycle?.state || "").trim().toUpperCase();
+    if (selectedCycleState === "PLANIFICADO") {
+      setMovementSubmitError("No puedes registrar movimientos en ciclos PLANIFICADOS.");
       return;
     }
 
@@ -1276,8 +1229,8 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     } catch (error) {
       console.error("Dashboard create movement error:", error);
       const message = error instanceof Error ? error.message : "";
-      if (message.includes("ONLY_PLANNED_CYCLE_ALLOWS_INGRESO_OR_RESERVADO")) {
-        setMovementSubmitError("Solo puedes registrar INGRESO o RESERVADO en ciclos PLANIFICADOS.");
+      if (message.includes("PLANNED_CYCLE_BLOCKS_MOVEMENTS")) {
+        setMovementSubmitError("No puedes registrar movimientos en ciclos PLANIFICADOS.");
       } else {
         setMovementSubmitError("No se pudo guardar el movimiento. Revisa los datos e intenta de nuevo.");
       }
@@ -1457,6 +1410,9 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
         state: "INACTIVE",
       };
       const memberEmail = String((member as any).emailMember || (member as any).email || "Sin definir");
+      const normalizedCurrentUserEmail = String(currentUserEmail || "").trim().toLowerCase();
+      const normalizedMemberEmail = String(memberEmail || "").trim().toLowerCase();
+      const canClosePlanningForMember = !!normalizedCurrentUserEmail && normalizedCurrentUserEmail === normalizedMemberEmail;
       const memberStateCycle = String((member as any).stateCycle || "Sin definir").trim().toUpperCase();
       const memberStateCycleStyles = memberStateCycle === "PLANIFICADO"
         ? { backgroundColor: "#DBEAFE", color: "#1D4ED8" }
@@ -1517,6 +1473,12 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
               <PaperText style={[styles.memberStateValue, { color: memberStateCycleStyles.color }]} numberOfLines={1}>{memberStateCycle}</PaperText>
             </View>
           </View>
+
+          {canClosePlanningForMember ? (
+            <Button mode="contained" buttonColor="#2563EB" textColor="#FFFFFF" onPress={() => undefined}>
+              Cerrar planificacion
+            </Button>
+          ) : null}
 
           <Divider style={styles.divider} />
 
@@ -1968,7 +1930,7 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
           </View>
 
           <View style={styles.modalActions}>
-            <Button mode="contained" onPress={() => undefined}>Cerrar planeacion</Button>
+            <Button mode="contained" onPress={() => undefined}>Cerrar periodo</Button>
           </View>
         </>
       );
@@ -2479,10 +2441,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
     if (activeModal === "formRegisterMovement") {
       const movementTypeOptions = ["INGRESO", "COMPROMISO", "RESERVADO", "GASTO"] as const;
       const movementPartyOptions = ["MIEMBRO", "BOLSA", "COMPROMISO", "OTRO"] as const;
-      const movementPeriodState = String(
-        (viewData?.periods ?? []).find((item) => String(item.id || "") === movementPeriodId)?.state || ""
-      ).toUpperCase();
-      const isNonPlannedCycle = movementPeriodState !== "PLANIFICADO";
       const originReferenceOptions = getMovementReferenceOptions(movementOrigin);
       const destinationReferenceOptions = getMovementReferenceOptions(movementDestination);
       const originReferencePlaceholder = getMovementReferencePlaceholder("origen", movementOrigin);
@@ -2521,17 +2479,6 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
               {movementTypeMenuVisible && (
                 <View style={dropdownListStyle}>
                   {movementTypeOptions.map((option) => {
-                    const lockedByCycle =
-                      (option === "INGRESO" || option === "RESERVADO") && isNonPlannedCycle;
-
-                    if (lockedByCycle) {
-                      return (
-                        <View key={option} style={dropdownItemDisabledStyle}>
-                          <PaperText style={[styles.dropdownItemDisabledText, { color: dropdownItemDisabledTextColor }]}>{option} (solo PLANIFICADO)</PaperText>
-                        </View>
-                      );
-                    }
-
                     return (
                       <Pressable
                         key={option}
@@ -2547,11 +2494,7 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
                   })}
                 </View>
               )}
-              {isNonPlannedCycle ? (
-                <PaperText style={styles.helperText}>
-                  En este ciclo solo puedes crear movimientos COMPROMISO o GASTO.
-                </PaperText>
-              ) : null}
+              <PaperText style={styles.helperText}>Al guardar se validara el estado del ciclo.</PaperText>
             </View>
 
             <View style={styles.formBlock}>
@@ -3167,10 +3110,10 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
                   <PaperText variant="titleMedium" style={styles.summaryTitle}>Compromisos creados</PaperText>
                 </View>
                 <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>
-                  {`Total creados: ${createdCommitments.length} | Pendientes: ${pendingCommitments.length} (${toCurrency(pendingCommitmentsTotal)})`}
+                  {`Total creados: ${createdCommitments.length} | Pendientes: ${pendingCreatedCommitments.length} (${toCurrency(pendingCreatedCommitmentsTotal)})`}
                 </PaperText>
                 {createdCommitments.length === 0 ? (
-                  <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay compromisos creados en este momento.</PaperText>
+                  <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay compromisos con cuenta origen Bolsa en este momento.</PaperText>
                 ) : (
                   createdCommitments.map((item, index) => (
                     <Pressable key={String(item.id || `pending-${index}`)} style={styles.entityRow} onPress={() => handleOpenCommitmentDetail(String(item.id || ""))}>
@@ -3185,7 +3128,7 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
                           <PaperText style={[styles.pendingAmount, styles.pendingAmountText]}>{toCurrency(Number(item.estimatedValue || 0))}</PaperText>
                         </View>
                         <View style={styles.pendingBottomRow}>
-                          <PaperText style={[styles.helperText, styles.pendingDateText]}>Fecha Vencimiento: {formatDisplayDate(String(item.endedDate || ""))}</PaperText>
+                          <PaperText style={[styles.helperText, styles.pendingDateText]}>Fecha vencimiento: {formatDisplayDate(String(item.endedDate || ""))}</PaperText>
                         </View>
                       </View>
                     </Pressable>
@@ -3229,7 +3172,7 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
                 const pocketFillWidth = expectedTotalIncome > 0 ? Math.max(0, Math.min(pocketPercentage, 100)) : pocketValue !== 0 ? 12 : 0;
                 const pocketPercentageLabel = expectedTotalIncome > 0 ? `${Math.round(Math.max(0, Math.min(pocketPercentage, 100)))}%` : pocketValue !== 0 ? "Sin ingreso" : "0%";
                 const statusLabel = getPocketStatusLabel(pocketPercentage);
-                const statusColor = getPocketStatusColor(pocketPercentage, theme);
+                const statusColor = getPocketStatusColor(pocketPercentage);
                 const lastMovement = pocketMovements.length > 0 ? pocketMovements[pocketMovements.length - 1] : null;
                 
                 let lastMovementLabel = "0";
@@ -3379,47 +3322,49 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
         ]}
         elevation={0}
       >
-        <Pressable style={styles.navItem} onPress={() => setActiveTab("inicio")}>
-          <Icon
-            source="home-variant"
-            size={18}
-            color={activeTab === "inicio" ? theme.colors.primary : theme.colors.onSurfaceVariant}
-          />
-          <Text
-            numberOfLines={1}
-            ellipsizeMode="clip"
-            style={[
-              styles.navText,
-              {
-                color:
-                  activeTab === "inicio" ? theme.colors.primary : theme.colors.onSurfaceVariant,
-              },
-            ]}
-          >
-            Inicio
-          </Text>
-        </Pressable>
+        <View style={styles.navSideGroup}>
+          <Pressable style={styles.navItem} onPress={() => setActiveTab("inicio")}>
+            <Icon
+              source="home-variant"
+              size={18}
+              color={activeTab === "inicio" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+            />
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="clip"
+              style={[
+                styles.navText,
+                {
+                  color:
+                    activeTab === "inicio" ? theme.colors.primary : theme.colors.onSurfaceVariant,
+                },
+              ]}
+            >
+              Inicio
+            </Text>
+          </Pressable>
 
-        <Pressable style={styles.navItem} onPress={() => setActiveTab("bolsas")}>
-          <Icon
-            source="wallet-outline"
-            size={18}
-            color={activeTab === "bolsas" ? theme.colors.primary : theme.colors.onSurfaceVariant}
-          />
-          <Text
-            numberOfLines={1}
-            ellipsizeMode="clip"
-            style={[
-              styles.navText,
-              {
-                color:
-                  activeTab === "bolsas" ? theme.colors.primary : theme.colors.onSurfaceVariant,
-              },
-            ]}
-          >
-            Bolsas
-          </Text>
-        </Pressable>
+          <Pressable style={styles.navItem} onPress={() => setActiveTab("bolsas")}>
+            <Icon
+              source="wallet-outline"
+              size={18}
+              color={activeTab === "bolsas" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+            />
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="clip"
+              style={[
+                styles.navText,
+                {
+                  color:
+                    activeTab === "bolsas" ? theme.colors.primary : theme.colors.onSurfaceVariant,
+                },
+              ]}
+            >
+              Bolsas
+            </Text>
+          </Pressable>
+        </View>
 
         <Pressable
           style={[
@@ -3431,51 +3376,53 @@ export default function DashboardScreen({ workspace, onBackToFamilies }: Dashboa
           <Icon source="plus" size={30} color={theme.colors.onPrimary} />
         </Pressable>
 
-        <Pressable style={styles.navItem} onPress={() => setActiveTab("movimientos")}>
-          <Icon
-            source="swap-horizontal"
-            size={18}
-            color={activeTab === "movimientos" ? theme.colors.primary : theme.colors.onSurfaceVariant}
-          />
-          <Text
-            numberOfLines={1}
-            ellipsizeMode="clip"
-            style={[
-              styles.navText,
-              {
-                color:
-                  activeTab === "movimientos"
-                    ? theme.colors.primary
-                    : theme.colors.onSurfaceVariant,
-              },
-            ]}
-          >
-            Movimientos
-          </Text>
-        </Pressable>
+        <View style={styles.navSideGroup}>
+          <Pressable style={styles.navItem} onPress={() => setActiveTab("movimientos")}>
+            <Icon
+              source="swap-horizontal"
+              size={18}
+              color={activeTab === "movimientos" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+            />
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="clip"
+              style={[
+                styles.navText,
+                {
+                  color:
+                    activeTab === "movimientos"
+                      ? theme.colors.primary
+                      : theme.colors.onSurfaceVariant,
+                },
+              ]}
+            >
+              Movimientos
+            </Text>
+          </Pressable>
 
-        <Pressable style={styles.navItem} onPress={() => setActiveTab("historial")}>
-          <Icon
-            source="history"
-            size={18}
-            color={activeTab === "historial" ? theme.colors.primary : theme.colors.onSurfaceVariant}
-          />
-          <Text
-            numberOfLines={1}
-            ellipsizeMode="clip"
-            style={[
-              styles.navText,
-              {
-                color:
-                  activeTab === "historial"
-                    ? theme.colors.primary
-                    : theme.colors.onSurfaceVariant,
-              },
-            ]}
-          >
-            Historial
-          </Text>
-        </Pressable>
+          <Pressable style={styles.navItem} onPress={() => setActiveTab("historial")}>
+            <Icon
+              source="history"
+              size={18}
+              color={activeTab === "historial" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+            />
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="clip"
+              style={[
+                styles.navText,
+                {
+                  color:
+                    activeTab === "historial"
+                      ? theme.colors.primary
+                      : theme.colors.onSurfaceVariant,
+                },
+              ]}
+            >
+              Historial
+            </Text>
+          </Pressable>
+        </View>
       </Surface>
 
       <Modal visible={activeModal !== null} transparent animationType="slide" onRequestClose={closeModal}>
@@ -3750,6 +3697,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
+  },
+  navSideGroup: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-evenly",
   },
   navText: {
     fontSize: 11,
@@ -4360,7 +4313,7 @@ function getPocketStatusLabel(percentage: number): string {
   return "Excedido";
 }
 
-function getPocketStatusColor(percentage: number, theme: any): string {
+function getPocketStatusColor(percentage: number): string {
   if (percentage < 60) return "#059669"; // Verde
   if (percentage <= 85) return "#D97706"; // Amarillo
   return "#DC2626"; // Rojo
@@ -4384,7 +4337,7 @@ function formatDisplayDate(dateValue: string): string {
   const trimmed = String(dateValue || "").trim();
   if (!trimmed) return "Sin fecha";
 
-  const parsed = new Date(trimmed);
+  const parsed = parseStoredDate(trimmed);
   if (Number.isNaN(parsed.getTime())) {
     return trimmed;
   }
@@ -4393,6 +4346,21 @@ function formatDisplayDate(dateValue: string): string {
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
   const year = parsed.getFullYear();
   return `${day}/${month}/${year}`;
+}
+
+function parseStoredDate(dateValue: string): Date {
+  const trimmed = String(dateValue || "").trim();
+  const isoDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+
+  // Dates stored as YYYY-MM-DD should be interpreted in local time to avoid UTC day shifts.
+  if (isoDateMatch) {
+    const year = Number(isoDateMatch[1]);
+    const month = Number(isoDateMatch[2]) - 1;
+    const day = Number(isoDateMatch[3]);
+    return new Date(year, month, day, 12, 0, 0, 0);
+  }
+
+  return new Date(trimmed);
 }
 
 function formatPocketRuleLabel(pocket: Record<string, unknown>): string {
