@@ -10,6 +10,8 @@ import {
   FamilyWorkspace,
   joinExistingFamily,
 } from "../services/AuthService";
+import { getErrorMessage } from "../utils/errorFeedback";
+import { SUCCESS_MESSAGES } from "../utils/successFeedback";
 
 type HomeNavigatorProps = {
   user: AuthenticatedUser;
@@ -29,6 +31,15 @@ export default function HomeNavigator({
   const [loadingAction, setLoadingAction] = useState(false);
   const [deletingFamilyId, setDeletingFamilyId] = useState<string | null>(null);
   const [existingFamilyId, setExistingFamilyId] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<"success" | "error">("error");
+
+  const showFeedback = (message: string, type: "success" | "error" = "error") => {
+    setFeedbackType(type);
+    setFeedbackMessage(message);
+    setFeedbackVisible(true);
+  };
 
   useEffect(() => {
     setLocalFamilies(families);
@@ -45,9 +56,14 @@ export default function HomeNavigator({
     setLoadingFamilyId(familyId);
     try {
       const workspace = await enterFamily(user, familyId);
+      showFeedback(SUCCESS_MESSAGES.familyEntered, "success");
       onWorkspaceReady(workspace);
     } catch (error) {
-      console.error("activateFamilyWorkspace error:", error);
+      showFeedback(
+        getErrorMessage(error, "No se pudo ingresar a la familia.", {
+          FAMILY_NOT_FOUND: "La familia seleccionada ya no existe o no esta disponible.",
+        })
+      );
     } finally {
       setLoadingFamilyId(null);
     }
@@ -58,9 +74,10 @@ export default function HomeNavigator({
     try {
       const created = await createFamilyTemplate(user, templateName);
       await refreshFamilies();
+      showFeedback(SUCCESS_MESSAGES.familyCreated, "success");
       await activateFamilyWorkspace(created.id);
     } catch (error) {
-      console.error("handleCreateTemplate error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo crear la plantilla."));
     } finally {
       setLoadingAction(false);
     }
@@ -77,8 +94,10 @@ export default function HomeNavigator({
       const joined = await joinExistingFamily(user, familyId);
       setExistingFamilyId("");
       await refreshFamilies();
+      showFeedback(SUCCESS_MESSAGES.familyJoined, "success");
       await activateFamilyWorkspace(joined.id);
     } catch (error) {
+      showFeedback(getErrorMessage(error, "No se pudo entrar a la familia."));
       throw error;
     } finally {
       setLoadingAction(false);
@@ -90,8 +109,9 @@ export default function HomeNavigator({
     try {
       await deleteFamilyTemplate(user, familyId);
       await refreshFamilies();
+      showFeedback(SUCCESS_MESSAGES.familyDeleted, "success");
     } catch (error) {
-      console.error("handleDeleteFamily error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo eliminar la plantilla."));
     } finally {
       setDeletingFamilyId(null);
     }
@@ -110,6 +130,10 @@ export default function HomeNavigator({
       onJoinExistingFamily={handleJoinExistingFamily}
       onEnterFamily={activateFamilyWorkspace}
       onDeleteFamily={handleDeleteFamily}
+      feedbackMessage={feedbackMessage}
+      feedbackVisible={feedbackVisible}
+      feedbackType={feedbackType}
+      onDismissFeedback={() => setFeedbackVisible(false)}
     />
   );
 }

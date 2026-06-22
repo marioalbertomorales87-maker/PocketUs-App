@@ -69,11 +69,9 @@ export default function BtnLoginGoogle() {
                     setEstadoLogin("Google Play Services no disponible")
                 } else {
                     setEstadoLogin(`Error: ${googleError.code}`)
-                    console.error("Google Sign-In error:", googleError)
                 }
             } else {
                 setEstadoLogin("Error desconocido")
-                console.error("Google Sign-In error inesperado:", error)
             }
         } finally {
             setCargando(false)

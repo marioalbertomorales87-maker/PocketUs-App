@@ -6,6 +6,7 @@ import {
   Card,
   Icon,
   IconButton,
+  Snackbar,
   Text,
   TextInput,
   useTheme,
@@ -25,6 +26,10 @@ type FamiliesScreenProps = {
   onJoinExistingFamily: () => Promise<void>;
   onEnterFamily: (familyId: string) => void;
   onDeleteFamily: (familyId: string) => void;
+  feedbackMessage: string;
+  feedbackVisible: boolean;
+  feedbackType: "success" | "error";
+  onDismissFeedback: () => void;
 };
 
 export default function FamiliesScreen({
@@ -39,17 +44,55 @@ export default function FamiliesScreen({
   onJoinExistingFamily,
   onEnterFamily,
   onDeleteFamily,
+  feedbackMessage,
+  feedbackVisible,
+  feedbackType,
+  onDismissFeedback,
 }: FamiliesScreenProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const tokens = theme.dark
+    ? {
+        background: "#07100D",
+        surface: "#101A16",
+        surfaceElevated: "#15231D",
+        surfaceGlass: "rgba(18, 31, 26, 0.78)",
+        border: "rgba(255,255,255,0.10)",
+        textPrimary: "#F4FBF8",
+        textSecondary: "#B8C7C0",
+        textMuted: "#7E9088",
+        shadow: "rgba(0,0,0,0.35)",
+        overlay: "rgba(5, 10, 8, 0.72)",
+      }
+    : {
+        background: "#F3F7F5",
+        surface: "#FFFFFF",
+        surfaceElevated: "#F8FBFA",
+        surfaceGlass: "rgba(255,255,255,0.82)",
+        border: "rgba(20,35,30,0.10)",
+        textPrimary: "#10201A",
+        textSecondary: "#52645C",
+        textMuted: "#829189",
+        shadow: "rgba(10, 20, 16, 0.18)",
+        overlay: "rgba(16, 24, 20, 0.24)",
+      };
   const uiColors = {
-    icon: theme.colors.primary,
-    cardBackground: theme.colors.elevation.level2,
-    cardBorder: theme.colors.outlineVariant,
-    mutedText: theme.colors.onSurfaceVariant,
-    modalBackground: theme.colors.surface,
-    closeBorder: theme.colors.outlineVariant,
-    destructiveBackground: theme.dark ? "#3A1717" : "#FFF5F5",
+    pageBackground: tokens.background,
+    icon: "#22C55E",
+    cardBackground: tokens.surfaceGlass,
+    cardBorder: tokens.border,
+    mutedText: tokens.textMuted,
+    modalBackground: tokens.surfaceGlass,
+    closeBorder: tokens.border,
+    destructiveBackground: "rgba(127, 29, 29, 0.28)",
+    textPrimary: tokens.textPrimary,
+    inputBorder: tokens.border,
+    inputBorderActive: "#22C55E",
+    inputBackground: tokens.surfaceElevated,
+    shadow: tokens.shadow,
+    overlay: tokens.overlay,
+    successFeedback: "rgba(16, 185, 129, 0.22)",
+    errorFeedback: "rgba(239, 68, 68, 0.22)",
   };
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -107,16 +150,16 @@ export default function FamiliesScreen({
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
+    <View style={[styles.container, { backgroundColor: uiColors.pageBackground }]}> 
       <TopLoadingBar visible={isLoading} />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.stack}>
-          <Card mode="elevated" style={[styles.actionsCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+          <Card mode="elevated" style={[styles.actionsCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder, shadowColor: uiColors.shadow }]}>
             <Card.Content style={styles.actionsCardContent}>
               <View style={styles.sectionHeaderRow}>
                 <Icon source="shape-outline" size={20} color={uiColors.icon} />
-                <Text variant="headlineSmall" style={styles.title}>¿Qué deseas hacer?</Text>
+                <Text variant="headlineSmall" style={[styles.title, { color: uiColors.textPrimary }]}>¿Qué deseas hacer?</Text>
               </View>
               <Text variant="bodyMedium" style={[styles.description, { color: uiColors.mutedText }]}>
                 Crea una plantilla nueva o únete a una existente.
@@ -134,15 +177,19 @@ export default function FamiliesScreen({
               </Button>
 
               <View style={styles.joinBlock}>
-                <Text variant="labelLarge" style={styles.fieldLabel}>Family ID existente</Text>
+                <Text variant="labelLarge" style={[styles.fieldLabel, { color: uiColors.textPrimary }]}>Family ID existente</Text>
                 <TextInput
                   value={existingFamilyId}
                   onChangeText={onExistingFamilyIdChange}
                   placeholder="Ejemplo: UUID de familia"
+                  placeholderTextColor={uiColors.mutedText}
+                  textColor={uiColors.textPrimary}
+                  outlineColor={uiColors.inputBorder}
+                  activeOutlineColor={uiColors.inputBorderActive}
                   autoCapitalize="none"
                   autoCorrect={false}
                   mode="outlined"
-                  style={styles.input}
+                  style={[styles.input, { backgroundColor: uiColors.inputBackground }]}
                 />
                 <Button
                   mode="contained-tonal"
@@ -160,11 +207,11 @@ export default function FamiliesScreen({
 
           {!loadingFamilies && (
             <>
-              <Card mode="elevated" style={[styles.actionsCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+              <Card mode="elevated" style={[styles.actionsCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder, shadowColor: uiColors.shadow }]}>
                 <Card.Content style={styles.actionsCardContent}>
                   <View style={styles.sectionHeaderRow}>
                     <Icon source="account-group" size={20} color={uiColors.icon} />
-                    <Text variant="headlineSmall" style={styles.title}>Tus familias</Text>
+                    <Text variant="headlineSmall" style={[styles.title, { color: uiColors.textPrimary }]}>Tus familias</Text>
                   </View>
 
                   <View style={styles.list}>
@@ -178,13 +225,13 @@ export default function FamiliesScreen({
                           mode="elevated"
                           style={[
                             styles.card,
-                            { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder },
+                            { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder, shadowColor: uiColors.shadow },
                             (isLoading || isDeleting) && styles.cardDisabled,
                           ]}
                         >
                           <Card.Content style={styles.familyCardContent}>
                             <View style={styles.familyTopRow}>
-                              <Text variant="titleMedium" style={styles.familyName}>{family.name}</Text>
+                              <Text variant="titleMedium" style={[styles.familyName, { color: uiColors.textPrimary }]}>{family.name}</Text>
                               <View style={styles.familyIdBadge}>
                                 <Text variant="labelSmall" style={styles.familyIdText} numberOfLines={1}>
                                   {family.id}
@@ -236,15 +283,15 @@ export default function FamiliesScreen({
 
       <Modal visible={showCreateModal} transparent animationType="slide" onRequestClose={() => setShowCreateModal(false)}>
         <KeyboardAvoidingView
-          style={[styles.createModalOverlay, { paddingBottom: Math.max(insets.bottom, 18) + 14 }]}
+          style={[styles.createModalOverlay, { backgroundColor: uiColors.overlay, paddingBottom: Math.max(insets.bottom, 18) + 14 }]}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
         >
-          <View style={[styles.createModalCard, { backgroundColor: uiColors.modalBackground }]}> 
+            <View style={[styles.createModalCard, { backgroundColor: uiColors.modalBackground, borderColor: uiColors.cardBorder, shadowColor: uiColors.shadow }]}> 
             <View style={styles.createModalHandle} />
 
             <View style={styles.createModalHeaderRow}>
-              <Text variant="titleLarge" style={styles.createModalTitle}>Nueva plantilla</Text>
+              <Text variant="titleLarge" style={[styles.createModalTitle, { color: uiColors.textPrimary }]}>Nueva plantilla</Text>
               <IconButton
                 icon="close"
                 size={18}
@@ -254,13 +301,17 @@ export default function FamiliesScreen({
             </View>
 
             <View style={styles.createModalFieldBlock}>
-              <Text variant="labelLarge" style={styles.createModalLabel}>Nombre de familia</Text>
+              <Text variant="labelLarge" style={[styles.createModalLabel, { color: uiColors.textPrimary }]}>Nombre de familia</Text>
               <TextInput
                 value={templateName}
                 onChangeText={setTemplateName}
                 placeholder="Ejemplo: Nombre de familia"
+                placeholderTextColor={uiColors.mutedText}
+                textColor={uiColors.textPrimary}
+                outlineColor={uiColors.inputBorder}
+                activeOutlineColor={uiColors.inputBorderActive}
                 mode="outlined"
-                style={styles.createModalInput}
+                style={[styles.createModalInput, { backgroundColor: uiColors.inputBackground }]}
               />
             </View>
 
@@ -278,11 +329,11 @@ export default function FamiliesScreen({
       </Modal>
 
       <Modal visible={showDeleteModal} transparent animationType="slide" onRequestClose={() => setShowDeleteModal(false)}>
-        <View style={[styles.createModalOverlay, { paddingBottom: Math.max(insets.bottom, 18) + 14 }] }>
-          <View style={[styles.createModalCard, { backgroundColor: uiColors.modalBackground }]}> 
+        <View style={[styles.createModalOverlay, { backgroundColor: uiColors.overlay, paddingBottom: Math.max(insets.bottom, 18) + 14 }] }>
+          <View style={[styles.createModalCard, { backgroundColor: uiColors.modalBackground, borderColor: uiColors.cardBorder, shadowColor: uiColors.shadow }]}> 
             <View style={styles.createModalHandle} />
             <View style={styles.createModalHeaderRow}>
-              <Text variant="titleLarge" style={styles.createModalTitle}>Eliminar plantilla</Text>
+              <Text variant="titleLarge" style={[styles.createModalTitle, { color: uiColors.textPrimary }]}>Eliminar plantilla</Text>
               <IconButton
                 icon="close"
                 size={18}
@@ -294,7 +345,7 @@ export default function FamiliesScreen({
               />
             </View>
 
-            <Text variant="bodyMedium" style={styles.modalDescription}>
+            <Text variant="bodyMedium" style={[styles.modalDescription, { color: uiColors.mutedText }]}>
               Esta accion eliminara la familia y su informacion. Deseas continuar?
             </Text>
 
@@ -325,11 +376,11 @@ export default function FamiliesScreen({
       </Modal>
 
       <Modal visible={showJoinErrorModal} transparent animationType="slide" onRequestClose={() => setShowJoinErrorModal(false)}>
-        <View style={[styles.createModalOverlay, { paddingBottom: Math.max(insets.bottom, 18) + 14 }] }>
-          <View style={[styles.createModalCard, { backgroundColor: uiColors.modalBackground }]}> 
+        <View style={[styles.createModalOverlay, { backgroundColor: uiColors.overlay, paddingBottom: Math.max(insets.bottom, 18) + 14 }] }>
+          <View style={[styles.createModalCard, { backgroundColor: uiColors.modalBackground, borderColor: uiColors.cardBorder, shadowColor: uiColors.shadow }]}> 
             <View style={styles.createModalHandle} />
             <View style={styles.createModalHeaderRow}>
-              <Text variant="titleLarge" style={styles.createModalTitle}>No se pudo entrar</Text>
+              <Text variant="titleLarge" style={[styles.createModalTitle, { color: uiColors.textPrimary }]}>No se pudo entrar</Text>
               <IconButton
                 icon="close"
                 size={18}
@@ -338,7 +389,7 @@ export default function FamiliesScreen({
               />
             </View>
 
-            <Text variant="bodyMedium" style={styles.modalDescription}>{joinErrorMessage}</Text>
+            <Text variant="bodyMedium" style={[styles.modalDescription, { color: uiColors.mutedText }]}>{joinErrorMessage}</Text>
 
             <Button mode="contained" style={styles.createModalPrimaryButton} contentStyle={styles.buttonContent} onPress={() => setShowJoinErrorModal(false)}>
               Entendido
@@ -346,6 +397,24 @@ export default function FamiliesScreen({
           </View>
         </View>
       </Modal>
+
+      <Snackbar
+        visible={feedbackVisible}
+        onDismiss={onDismissFeedback}
+        duration={3500}
+        style={{
+          backgroundColor: feedbackType === "success" ? uiColors.successFeedback : uiColors.errorFeedback,
+          borderWidth: 1,
+          borderColor: feedbackType === "success" ? "rgba(16, 185, 129, 0.35)" : "rgba(239, 68, 68, 0.35)",
+        }}
+        theme={{
+          colors: {
+            inverseOnSurface: uiColors.textPrimary,
+          },
+        }}
+      >
+        {feedbackMessage}
+      </Snackbar>
     </View>
   );
 }
@@ -378,18 +447,18 @@ const styles = StyleSheet.create({
     color: "#5B6670",
   },
   actionsCard: {
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#DCE3EA",
-    backgroundColor: "#FFFFFF",
+    borderColor: "rgba(148, 163, 184, 0.24)",
+    backgroundColor: "rgba(20, 28, 43, 0.84)",
     shadowColor: "#0F172A",
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    shadowOpacity: 0.24,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
   actionsCardContent: {
-    padding: 16,
+    padding: 18,
   },
   primaryButton: {
     borderRadius: 12,
@@ -407,6 +476,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: "transparent",
+    borderRadius: 12,
   },
   secondaryButton: {
     marginTop: 10,
@@ -423,24 +493,26 @@ const styles = StyleSheet.create({
   },
   createModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: "transparent",
     justifyContent: "flex-end",
     paddingHorizontal: 10,
     paddingBottom: 10,
   },
   createModalCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     borderBottomLeftRadius: 16,
     borderBottomRightRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.24)",
     shadowColor: "#0F172A",
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    elevation: 10,
   },
   createModalHandle: {
     alignSelf: "center",
@@ -458,7 +530,7 @@ const styles = StyleSheet.create({
   },
   createModalTitle: {
     fontWeight: "800",
-    color: "#111827",
+    color: "#E5ECF6",
   },
   createModalCloseButton: {
     borderWidth: 1,
@@ -472,10 +544,11 @@ const styles = StyleSheet.create({
   },
   createModalLabel: {
     fontWeight: "700",
-    color: "#111827",
+    color: "#E5ECF6",
   },
   createModalInput: {
     backgroundColor: "transparent",
+    borderRadius: 12,
   },
   createModalPrimaryButton: {
     borderRadius: 14,
@@ -492,13 +565,13 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#DCE3EA",
-    backgroundColor: "#FFFFFF",
+    borderColor: "rgba(148, 163, 184, 0.2)",
+    backgroundColor: "transparent",
     shadowColor: "#0F172A",
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
   },
   familyCardContent: {
     gap: 10,
@@ -517,7 +590,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   familyIdBadge: {
-    backgroundColor: "#10B981",
+    backgroundColor: "rgba(34, 197, 94, 0.85)",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -529,7 +602,7 @@ const styles = StyleSheet.create({
   },
   familyRole: {
     fontWeight: "700",
-    color: "#475569",
+    color: "#9CAFC8",
   },
   enterButton: {
     borderRadius: 10,
@@ -538,8 +611,8 @@ const styles = StyleSheet.create({
   deleteFamilyButton: {
     borderRadius: 10,
     alignSelf: "stretch",
-    borderColor: "#EF4444",
-    backgroundColor: "#FFF5F5",
+    borderColor: "rgba(239, 68, 68, 0.7)",
+    backgroundColor: "rgba(127, 29, 29, 0.28)",
   },
   modalActionsRow: {
     marginTop: 14,

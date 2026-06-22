@@ -214,8 +214,9 @@ async function getActiveDocsByState(
   subcollection: "members" | "pockets"
 ) {
   const ref = collection(db, "families", familyId, subcollection);
-  const q = query(ref, where("state", "==", "ACTIVE"));
-  const snap = await getDocs(q);
+  const snap = subcollection === "members"
+    ? await getDocs(query(ref, where("state", "==", "ACTIVE")))
+    : await getDocs(ref);
   return snap.docs;
 }
 
@@ -278,7 +279,7 @@ export async function getFamilyDashboard(familyId: string): Promise<DashboardDat
   );
   const activeCycle = periods.find((row) => {
     const state = String(row.data().state || "").toUpperCase();
-    return state === "ACTIVO" || state === "ABIERTO";
+    return state === "ABIERTO";
   });
   const currentCycle = activeCycle ?? plannedCycle;
   if (currentCycle) {
@@ -316,7 +317,7 @@ export async function getFamilyViewData(familyId: string, viewName: FamilyViewNa
   );
   const activeCycle = periods.find((row) => {
     const state = String(row.data().state || "").toUpperCase();
-    return state === "ACTIVO" || state === "ABIERTO";
+    return state === "ABIERTO";
   });
   const currentCycle = activeCycle ?? plannedCycle;
   if (currentCycle) {
@@ -465,7 +466,6 @@ export async function createFamilyTemplate(
   batch.set(familyRef, {
     name: safeName,
     mainUserId: userId,
-    mainEmail: user.email,
     state: "ACTIVE",
     createdAt: now,
     updatedAt: now,
@@ -550,7 +550,7 @@ export async function createFamilyMember(
   }
 
   const name = String(input.name || "").trim();
-  const emailMember = String(input.emailMember || "").trim();
+  const emailMember = String(input.emailMember || "").trim().toLowerCase();
   const bank = String(input.bank || "").trim();
   const contract = String(input.contract || "").trim();
   const state = input.state === "INACTIVE" ? "INACTIVE" : "ACTIVE";
@@ -562,14 +562,17 @@ export async function createFamilyMember(
   const memberId = Crypto.randomUUID();
   const now = serverTimestamp();
   const memberRef = doc(db, "families", familyId, "members", memberId);
+  const userByEmailQuery = query(collection(db, "users"), where("email", "==", emailMember), limit(1));
+  const userByEmailSnap = await getDocs(userByEmailQuery);
+  const resolvedUserId = userByEmailSnap.empty ? null : String(userByEmailSnap.docs[0].id || "").trim() || null;
 
   await setDoc(memberRef, {
+    userId: resolvedUserId,
     name,
     emailMember,
     bank,
     contract,
     state,
-    stateCycle: "PLANIFICADO",
     createdAt: now,
     updatedAt: now,
   });
@@ -664,9 +667,7 @@ export async function createFamilyPocket(
   }
 
   const pocketsSnap = await getDocs(collection(db, "families", familyId, "pockets"));
-  const activePockets = pocketsSnap.docs
-    .map((row) => row.data())
-    .filter((row) => String(row.state || "ACTIVE").toUpperCase() === "ACTIVE");
+  const activePockets = pocketsSnap.docs.map((row) => row.data());
 
   const hasExistingRemainingPocket = activePockets.some((row) => String(row.typeRule || "") === "-");
   if (typeRule === "-" && hasExistingRemainingPocket) {
@@ -724,7 +725,6 @@ export async function createFamilyPocket(
     valueRule,
     category,
     priority: 0,
-    state: "ACTIVE",
     createdAt: now,
     updatedAt: now,
   });
@@ -1050,9 +1050,7 @@ async function recalculateRemainingPocketForExpectedIncome(
   }
 
   const pocketsSnap = await getDocs(collection(db, "families", familyId, "pockets"));
-  const activePockets = pocketsSnap.docs.filter(
-    (row) => String(row.data().state || "ACTIVE").toUpperCase() === "ACTIVE"
-  );
+  const activePockets = pocketsSnap.docs;
 
   const remainingPocketDoc = activePockets.find((row) => String(row.data().typeRule || "") === "-");
   if (!remainingPocketDoc) {
@@ -1264,6 +1262,7 @@ export async function createFamilyInitialIncome(
     memberId,
     realValue,
     pocketsValue: realValue,
+    planningState: "PLANIFICADO",
     createdAt: now,
     updatedAt: now,
   });
@@ -1311,6 +1310,7 @@ export async function updateFamilyInitialIncome(
     batch.set(incomeDoc.ref, {
       realValue: newRealValue,
       pocketsValue: newRealValue,
+      planningState: "PLANIFICADO",
       updatedAt: now,
     }, { merge: true });
   } else {
@@ -1320,6 +1320,7 @@ export async function updateFamilyInitialIncome(
       memberId,
       realValue: newRealValue,
       pocketsValue: newRealValue,
+      planningState: "PLANIFICADO",
       createdAt: now,
       updatedAt: now,
     });
@@ -1340,7 +1341,7 @@ async function resolveBudgetCycleIdForCommitmentImpact(familyId: string): Promis
   const planned = cyclesSnap.docs.find((row) => String(row.data().state || "").toUpperCase() === "PLANIFICADO");
   const active = cyclesSnap.docs.find((row) => {
     const state = String(row.data().state || "").toUpperCase();
-    return state === "ACTIVO" || state === "ABIERTO";
+    return state === "ABIERTO";
   });
 
   const cycle = planned ?? active;

@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet, useColorScheme, View } from "react-native";
+import { Alert, StyleSheet, useColorScheme, View } from "react-native";
 import { useCallback, useState } from "react";
 import { PaperProvider } from "react-native-paper";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -14,6 +14,7 @@ import {
   FamilyWorkspace,
   getV1Bootstrap,
 } from "./services/AuthService";
+import { getErrorMessage } from "./utils/errorFeedback";
 
 type AppPhase = "splash" | "login" | "families" | "dashboard";
 
@@ -62,7 +63,10 @@ export default function App() {
         const refreshed = await getV1Bootstrap(user);
         setBootstrap(refreshed);
       } catch (error) {
-        console.error("goBackToFamilies refresh error:", error);
+        Alert.alert(
+          "No se pudo actualizar",
+          getErrorMessage(error, "No se pudo actualizar la lista de familias. Intenta nuevamente.")
+        );
       } finally {
         setIsRefreshingFamilies(false);
       }

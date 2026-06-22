@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useColorScheme } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useColorScheme } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -11,11 +11,15 @@ import {
   Icon,
   IconButton,
   Surface,
+  Snackbar,
   Text as PaperText,
   TextInput,
   useTheme,
 } from "react-native-paper";
+import Svg, { Circle, G } from "react-native-svg";
 import TopLoadingBar from "../components/TopLoadingBar";
+import { getErrorMessage } from "../utils/errorFeedback";
+import { SUCCESS_MESSAGES } from "../utils/successFeedback";
 import {
   createFamilyCommitment,
   createFamilyInitialIncome,
@@ -42,7 +46,7 @@ type DashboardScreenProps = {
 };
 
 type DashboardTab = "inicio" | "bolsas" | "movimientos" | "historial";
-type MovementListFilter = "TODOS" | "ENTRADAS" | "SALIDAS";
+type MovementListFilter = "TODOS" | "INGRESO" | "RESERVADO" | "COMPROMISO" | "GASTO";
 type ModalKey =
   | "quickActions"
   | "detailMember"
@@ -67,75 +71,121 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const colorScheme = useColorScheme();
   const isDarkMode = theme.dark || colorScheme === "dark";
   const insets = useSafeAreaInsets();
+  const themeTokens = useMemo(
+    () =>
+      isDarkMode
+        ? {
+            background: "#07100D",
+            surface: "#101A16",
+            surfaceElevated: "#15231D",
+            surfaceGlass: "rgba(18, 31, 26, 0.78)",
+            border: "rgba(255,255,255,0.10)",
+            textPrimary: "#F4FBF8",
+            textSecondary: "#B8C7C0",
+            textMuted: "#7E9088",
+            shadow: "rgba(0,0,0,0.35)",
+            overlay: "rgba(5, 10, 8, 0.72)",
+          }
+        : {
+            background: "#F3F7F5",
+            surface: "#FFFFFF",
+            surfaceElevated: "#F8FBFA",
+            surfaceGlass: "rgba(255,255,255,0.82)",
+            border: "rgba(20,35,30,0.10)",
+            textPrimary: "#10201A",
+            textSecondary: "#52645C",
+            textMuted: "#829189",
+            shadow: "rgba(10, 20, 16, 0.18)",
+            overlay: "rgba(16, 24, 20, 0.24)",
+          },
+    [isDarkMode]
+  );
   const uiColors = useMemo(
     () => ({
-      cardBackground: theme.colors.elevation.level2,
-      cardBorder: theme.colors.outlineVariant,
-      mutedText: theme.colors.onSurfaceVariant,
-      onSurface: theme.colors.onSurface,
-      metricBackground: theme.colors.surfaceVariant,
-      metricBorder: theme.colors.outlineVariant,
-      navBackground: theme.colors.surface,
-      navBorder: theme.colors.outlineVariant,
-      memberIconBackground: theme.colors.secondaryContainer,
-      icon: theme.colors.onSurfaceVariant,
-      successText: theme.dark ? "#6EE7B7" : "#059669",
-      warningText: theme.dark ? "#FDBA74" : "#C2410C",
+      pageBackground: themeTokens.background,
+      glassBackground: themeTokens.surfaceGlass,
+      cardBackground: themeTokens.surfaceGlass,
+      cardBorder: themeTokens.border,
+      mutedText: themeTokens.textMuted,
+      textSecondary: themeTokens.textSecondary,
+      onSurface: themeTokens.textPrimary,
+      metricBackground: themeTokens.surfaceElevated,
+      metricBorder: themeTokens.border,
+      navBackground: themeTokens.surfaceGlass,
+      navBorder: themeTokens.border,
+      navActiveBackground: "rgba(34, 197, 94, 0.09)",
+      navActiveBorder: "rgba(34, 197, 94, 0.24)",
+      navActiveText: "#4ADE80",
+      navInactiveText: themeTokens.textSecondary,
+      memberIconBackground: "rgba(15, 118, 110, 0.22)",
+      icon: themeTokens.textSecondary,
+      successText: "#22C55E",
+      warningText: "#F59E0B",
+      shadow: themeTokens.shadow,
+      overlay: themeTokens.overlay,
       memberAccent: "#059669",
       periodAccent: "#1D4ED8",
       pocketAccent: "#0891B2",
       commitmentAccent: "#EA580C",
+      planningAccent: "#7C3AED",
+      dangerAccent: "#EF4444",
+      remainingPocketBackground: isDarkMode ? "rgba(91, 33, 182, 0.30)" : "rgba(139, 92, 246, 0.14)",
+      remainingPocketBorder: isDarkMode ? "rgba(196, 181, 253, 0.34)" : "rgba(124, 58, 237, 0.24)",
+      remainingPocketMetricBackground: isDarkMode ? "rgba(91, 33, 182, 0.26)" : "rgba(139, 92, 246, 0.11)",
+      remainingPocketMetricBorder: isDarkMode ? "rgba(196, 181, 253, 0.22)" : "rgba(124, 58, 237, 0.16)",
+      remainingPocketLabel: isDarkMode ? "#DDD6FE" : "#6D28D9",
+      remainingPocketValue: isDarkMode ? "#F5F3FF" : "#4C1D95",
     }),
-    [theme]
+    [isDarkMode, themeTokens]
   );
   const modalTextInputTheme = useMemo(
     () => ({
       ...theme,
       colors: {
         ...theme.colors,
-        background: isDarkMode ? "#111827" : theme.colors.elevation.level2,
-        surface: isDarkMode ? "#111827" : theme.colors.elevation.level2,
-        onSurface: isDarkMode ? "#F9FAFB" : theme.colors.onSurface,
-        onSurfaceVariant: isDarkMode ? "#CBD5E1" : theme.colors.onSurfaceVariant,
-        outline: isDarkMode ? "#94A3B8" : theme.colors.outline,
+        background: themeTokens.surfaceElevated,
+        surface: themeTokens.surfaceElevated,
+        onSurface: themeTokens.textPrimary,
+        onSurfaceVariant: themeTokens.textSecondary,
+        outline: themeTokens.border,
       },
     }),
-    [isDarkMode, theme]
+    [theme, themeTokens]
   );
   const modalInputFieldStyle = useMemo(
-    () => [styles.inputField, { backgroundColor: isDarkMode ? "#111827" : theme.colors.elevation.level2 }],
-    [isDarkMode, theme.colors.elevation.level2]
+    () => [styles.inputField, { backgroundColor: themeTokens.surfaceElevated }],
+    [themeTokens.surfaceElevated]
   );
   const selectorFieldStyle = useMemo(
-    () => [styles.selectorField, { backgroundColor: isDarkMode ? "#111827" : theme.colors.elevation.level2, borderColor: isDarkMode ? "#94A3B8" : theme.colors.outline }],
-    [isDarkMode, theme.colors.elevation.level2, theme.colors.outline]
+    () => [styles.selectorField, { backgroundColor: themeTokens.surfaceElevated, borderColor: themeTokens.border }],
+    [themeTokens.border, themeTokens.surfaceElevated]
   );
   const selectorTextStyle = useMemo(
-    () => [styles.selectorText, { color: isDarkMode ? "#F9FAFB" : theme.colors.onSurface }],
-    [isDarkMode, theme.colors.onSurface]
+    () => [styles.selectorText, { color: themeTokens.textPrimary }],
+    [themeTokens.textPrimary]
   );
   const dropdownListStyle = useMemo(
-    () => [styles.dropdownList, { backgroundColor: isDarkMode ? "#111827" : theme.colors.elevation.level3, borderColor: isDarkMode ? "#94A3B8" : theme.colors.outline }],
-    [isDarkMode, theme.colors.elevation.level3, theme.colors.outline]
+    () => [styles.dropdownList, { backgroundColor: themeTokens.surfaceElevated, borderColor: themeTokens.border }],
+    [themeTokens.border, themeTokens.surfaceElevated]
   );
   const dropdownItemStyle = useMemo(
-    () => [styles.dropdownItem, { backgroundColor: isDarkMode ? "#111827" : theme.colors.elevation.level3, borderBottomColor: isDarkMode ? "#334155" : theme.colors.outlineVariant }],
-    [isDarkMode, theme.colors.elevation.level3, theme.colors.outlineVariant]
+    () => [styles.dropdownItem, { backgroundColor: themeTokens.surfaceElevated, borderBottomColor: themeTokens.border }],
+    [themeTokens.border, themeTokens.surfaceElevated]
   );
   const dropdownItemTextStyle = useMemo(
-    () => [styles.dropdownItemText, { color: isDarkMode ? "#F9FAFB" : theme.colors.onSurface }],
-    [isDarkMode, theme.colors.onSurface]
+    () => [styles.dropdownItemText, { color: themeTokens.textPrimary }],
+    [themeTokens.textPrimary]
   );
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>("inicio");
   const [movementListFilter, setMovementListFilter] = useState<MovementListFilter>("TODOS");
+  const [movementSearchQuery, setMovementSearchQuery] = useState("");
   const [activeModal, setActiveModal] = useState<ModalKey | null>(null);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardIncomeByMemberId, setWizardIncomeByMemberId] = useState<Record<string, string>>({});
   const [wizardError, setWizardError] = useState<string | null>(null);
   const [isSavingWizardIncomes, setIsSavingWizardIncomes] = useState(false);
-  const [hasShownAutoInitialization, setHasShownAutoInitialization] = useState(false);
   const [returnToWizardStep, setReturnToWizardStep] = useState<number | null>(null);
   const [movementType, setMovementType] = useState<"" | "INGRESO" | "COMPROMISO" | "RESERVADO" | "GASTO">("");
   const [movementTypeMenuVisible, setMovementTypeMenuVisible] = useState(false);
@@ -152,7 +202,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const [movementDestinationReferenceLabel, setMovementDestinationReferenceLabel] = useState("Seleccione referencia destino");
   const [movementDestinationReferenceText, setMovementDestinationReferenceText] = useState("");
   const [movementPeriodId, setMovementPeriodId] = useState("");
-  const [movementPeriodLabel, setMovementPeriodLabel] = useState("Sin ciclo ACTIVO o PLANIFICADO");
+  const [movementPeriodLabel, setMovementPeriodLabel] = useState("Sin ciclo ABIERTO o PLANIFICADO");
   const [movementValue, setMovementValue] = useState("");
   const [movementConcept, setMovementConcept] = useState("");
   const [movementSubmitError, setMovementSubmitError] = useState<string | null>(null);
@@ -257,13 +307,26 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const [commitmentDetailError, setCommitmentDetailError] = useState<string | null>(null);
   const [isSavingPocketDetail, setIsSavingPocketDetail] = useState(false);
   const [pocketDetailError, setPocketDetailError] = useState<string | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<"success" | "error">("error");
+
+  const showFeedback = (message: string, type: "success" | "error" = "error") => {
+    setFeedbackType(type);
+    setFeedbackMessage(message);
+    setFeedbackVisible(true);
+  };
+
+  const showSuccess = (message: string) => {
+    showFeedback(message, "success");
+  };
 
   const currentCycle = useMemo(() => {
     const periods = viewData?.periods ?? [];
     const planned = periods.find((row) => String(row.state || "").toUpperCase() === "PLANIFICADO");
     const active = periods.find((row) => {
       const state = String(row.state || "").toUpperCase();
-      return state === "ACTIVO" || state === "ABIERTO";
+      return state === "ABIERTO";
     });
     return active ?? planned ?? null;
   }, [viewData?.periods]);
@@ -297,16 +360,171 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
     });
   }, [selectedPocketId, viewData?.movements]);
 
+  const movementMembersById = useMemo(
+    () =>
+      new Map(
+        (viewData?.members ?? []).map((item) => [String(item.id || ""), String(item.name || item.emailMember || "Miembro")])
+      ),
+    [viewData?.members]
+  );
+  const movementPocketsById = useMemo(
+    () => new Map((viewData?.pockets ?? []).map((item) => [String(item.id || ""), String(item.name || "Bolsa")])),
+    [viewData?.pockets]
+  );
+  const movementCommitmentsById = useMemo(
+    () =>
+      new Map(
+        (viewData?.commitments ?? []).map((item) => [
+          String(item.id || ""),
+          String(item.commitmentConcept || item.reference || item.name || "Compromiso"),
+        ])
+      ),
+    [viewData?.commitments]
+  );
+
+  const resolveMovementPartyLabel = (typeRaw: unknown, referenceRaw: unknown) => {
+    const type = String(typeRaw || "").toUpperCase();
+    const reference = String(referenceRaw || "").trim();
+    if (!reference) return "Sin referencia";
+
+    if (type === "MIEMBRO") return movementMembersById.get(reference) || reference;
+    if (type === "BOLSA") return movementPocketsById.get(reference) || reference;
+    if (type === "COMPROMISO") return movementCommitmentsById.get(reference) || reference;
+    if (type === "OTRO") return reference;
+    return reference;
+  };
+
+  const getMovementRawDate = (movement: Record<string, unknown>) => {
+    const rawDate = movement.date || movement.createdAt || movement.timestamp || movement.dateTime;
+    if (typeof rawDate === "string") {
+      const parsed = new Date(rawDate);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (typeof rawDate === "number") {
+      const parsed = new Date(rawDate);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (rawDate && typeof (rawDate as { toDate?: () => Date }).toDate === "function") {
+      const parsed = (rawDate as { toDate: () => Date }).toDate();
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (rawDate && typeof (rawDate as { seconds?: number }).seconds === "number") {
+      const parsed = new Date((rawDate as { seconds: number }).seconds * 1000);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    return null;
+  };
+
   const filteredMovements = useMemo(() => {
     const movements = viewData?.movements ?? [];
-    if (movementListFilter === "ENTRADAS") {
-      return movements.filter((movement) => String(movement.movementType || movement.type || "").toUpperCase() === "INGRESO");
-    }
-    if (movementListFilter === "SALIDAS") {
-      return movements.filter((movement) => String(movement.movementType || movement.type || "").toUpperCase() !== "INGRESO");
-    }
-    return movements;
-  }, [movementListFilter, viewData?.movements]);
+    const searchTerm = movementSearchQuery.trim().toLowerCase();
+
+    return movements.filter((movement) => {
+      const movementType = String(movement.movementType || movement.type || "").toUpperCase();
+      if (movementListFilter !== "TODOS" && movementType !== movementListFilter) {
+        return false;
+      }
+
+      if (!searchTerm) return true;
+
+      const concept = String(movement.movementConcept || movement.concept || "").toLowerCase();
+      const originLabel = resolveMovementPartyLabel(movement.originType, movement.referenceOrigin).toLowerCase();
+      const destinationLabel = resolveMovementPartyLabel(movement.destinationType, movement.referenceDestination).toLowerCase();
+      return concept.includes(searchTerm) || movementType.toLowerCase().includes(searchTerm) || originLabel.includes(searchTerm) || destinationLabel.includes(searchTerm);
+    });
+  }, [movementListFilter, movementSearchQuery, viewData?.movements, movementMembersById, movementPocketsById, movementCommitmentsById]);
+
+  const movementTotalsByType = useMemo(() => {
+    const safeRound = (value: number) => Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+    return (viewData?.movements ?? []).reduce(
+      (acc, movement) => {
+        const movementType = String(movement.movementType || movement.type || "").toUpperCase();
+        const movementValue = Math.abs(Number(movement.value || 0));
+        acc.totalMoved = safeRound(acc.totalMoved + movementValue);
+        if (movementType === "INGRESO") {
+          acc.ingresos = safeRound(acc.ingresos + movementValue);
+          acc.ingresosCount += 1;
+        }
+        if (movementType === "RESERVADO") {
+          acc.reservas = safeRound(acc.reservas + movementValue);
+          acc.reservasCount += 1;
+        }
+        if (movementType === "COMPROMISO") {
+          acc.compromisos = safeRound(acc.compromisos + movementValue);
+          acc.compromisosCount += 1;
+        }
+        if (movementType === "GASTO") {
+          acc.gastos = safeRound(acc.gastos + movementValue);
+          acc.gastosCount += 1;
+        }
+        return acc;
+      },
+      {
+        totalMoved: 0,
+        ingresos: 0,
+        reservas: 0,
+        compromisos: 0,
+        gastos: 0,
+        ingresosCount: 0,
+        reservasCount: 0,
+        compromisosCount: 0,
+        gastosCount: 0,
+      }
+    );
+  }, [viewData?.movements]);
+
+  const movementTimelineGroups = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const startOfWeek = new Date(startOfToday);
+    const day = startOfWeek.getDay();
+    const diffToMonday = (day + 6) % 7;
+    startOfWeek.setDate(startOfWeek.getDate() - diffToMonday);
+
+    const groups: Record<string, Array<Record<string, unknown> & { id: string }>> = {
+      Hoy: [],
+      Ayer: [],
+      "Esta semana": [],
+      Anteriores: [],
+    };
+
+    [...filteredMovements]
+      .sort((a, b) => {
+        const aDate = getMovementRawDate(a) || new Date(0);
+        const bDate = getMovementRawDate(b) || new Date(0);
+        return bDate.getTime() - aDate.getTime();
+      })
+      .forEach((movement) => {
+        const movementDate = getMovementRawDate(movement);
+        if (!movementDate) {
+          groups.Anteriores.push(movement as Record<string, unknown> & { id: string });
+          return;
+        }
+
+        if (movementDate >= startOfToday) {
+          groups.Hoy.push(movement as Record<string, unknown> & { id: string });
+          return;
+        }
+        if (movementDate >= startOfYesterday && movementDate < startOfToday) {
+          groups.Ayer.push(movement as Record<string, unknown> & { id: string });
+          return;
+        }
+        if (movementDate >= startOfWeek) {
+          groups["Esta semana"].push(movement as Record<string, unknown> & { id: string });
+          return;
+        }
+        groups.Anteriores.push(movement as Record<string, unknown> & { id: string });
+      });
+
+    return [
+      { label: "Hoy", items: groups.Hoy },
+      { label: "Ayer", items: groups.Ayer },
+      { label: "Esta semana", items: groups["Esta semana"] },
+      { label: "Anteriores", items: groups.Anteriores },
+    ].filter((group) => group.items.length > 0);
+  }, [filteredMovements]);
 
   const selectedMemberCommitments = useMemo(() => {
     const memberId = String(selectedMemberId || "").trim();
@@ -329,7 +547,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         setViewData(nextData);
       } catch (error) {
         if (!isActive) return;
-        console.error("Dashboard getFamilyViewData error:", error);
+        showFeedback(getErrorMessage(error, "No se pudo cargar la informacion del tablero."));
         setViewData(null);
       } finally {
         if (!isActive) return;
@@ -440,11 +658,17 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   );
   const activeCycle = initializationPeriods.find((item) => {
     const state = String(item.state || "").toUpperCase();
-    return state === "ACTIVO" || state === "ABIERTO";
+    return state === "ABIERTO";
   });
   const initializationCycle = plannedCycle ?? activeCycle;
   const hasCycle = Boolean(initializationCycle);
-  const hasIncomes = initializationIncomes.length > 0;
+  const memberIds = initializationMembers.map((member) => String(member.id || "")).filter(Boolean);
+  const memberIncomeIds = new Set(
+    initializationIncomes.map((income) => String(income.memberId || "")).filter(Boolean)
+  );
+  const hasAllMemberIncomes = memberIds.length > 0 && memberIds.every((memberId) => memberIncomeIds.has(memberId));
+  const initializationMissingStep = !hasMembers ? 0 : !hasCycle ? 1 : !hasAllMemberIncomes ? 2 : null;
+  const isInitializationComplete = initializationMissingStep === null;
 
   const budgetCycle = activeCycle ?? plannedCycle;
   const expectedTotalIncome = roundToTwoDecimals(Number(budgetCycle?.expectedTotalIncome || 0));
@@ -499,6 +723,52 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
     const value = Number(item.estimatedValue || 0);
     return roundToTwoDecimals(acc + (Number.isFinite(value) ? value : 0));
   }, 0);
+  const normalizedCurrentUserEmail = String(currentUserEmail || "").trim().toLowerCase();
+  const myMember = initializationMembers.find(
+    (member) => String(member.emailMember || "").trim().toLowerCase() === normalizedCurrentUserEmail
+  ) ?? null;
+  const myMemberId = String(myMember?.id || "");
+  const myIncome = (viewData?.incomes ?? []).find((income) => String(income.memberId || "") === myMemberId) ?? null;
+  const myPlanningState = String(myIncome?.planningState || "PLANIFICADO").toUpperCase();
+  const myPendingTasksCount = (viewData?.commitments ?? []).filter((item) => {
+    const state = String(item.state || "").toUpperCase();
+    return (
+      String(item.commitmentOriginType || "").toUpperCase() === "MIEMBRO" &&
+      String(item.originId || "") === myMemberId &&
+      (state === "PENDIENTE" || state === "RESERVADO")
+    );
+  }).length;
+  const myGeneratedMovementsCount = (viewData?.movements ?? []).filter((item) => {
+    return String(item.originType || "").toUpperCase() === "MIEMBRO" && String(item.referenceOrigin || "") === myMemberId;
+  }).length;
+  const myPlanningCardStatus = myPlanningState === "PLANIFICADO"
+    ? "PLANIFICADO"
+    : myPendingTasksCount > 0
+      ? "CERRADO_PENDIENTE"
+      : "COMPLETADO";
+  const myPlanningStatusLabel = myPlanningCardStatus === "PLANIFICADO"
+    ? "Pendiente"
+    : myPlanningCardStatus === "CERRADO_PENDIENTE"
+      ? "Cerrada"
+      : "Completada";
+  const myPlanningStatusColor = myPlanningCardStatus === "PLANIFICADO"
+    ? "#F59E0B"
+    : myPlanningCardStatus === "CERRADO_PENDIENTE"
+      ? "#A78BFA"
+      : "#22C55E";
+  const paidCreatedCommitments = createdCommitments.filter((item) => {
+    const state = String(item.state || "").toUpperCase();
+    return state === "PAGADO" || state === "COMPLETADO";
+  }).length;
+  const overdueCreatedCommitments = createdCommitments.filter((item) => {
+    const state = String(item.state || "").toUpperCase();
+    const isPending = state === "PENDIENTE" || state === "RESERVADO";
+    const endedDate = String(item.endedDate || "").trim();
+    if (!isPending || !endedDate) return false;
+    const parsed = parseStoredDate(endedDate);
+    if (Number.isNaN(parsed.getTime())) return false;
+    return parsed.getTime() < Date.now();
+  }).length;
   const nextCommitment = [...pendingCommitments]
     .filter((item) => String(item.endedDate || "").trim())
     .sort((a, b) => String(a.endedDate || "").localeCompare(String(b.endedDate || "")))[0];
@@ -507,31 +777,162 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
     (viewData?.incomes ?? []).map((income) => [String(income.memberId || ""), Number(income.pocketsValue || 0)])
   );
 
+  const pocketVisualItems = useMemo(() => {
+    const pockets = (viewData?.pockets ?? []).filter(
+      (item) => String(item.state || "ACTIVE").toUpperCase() === "ACTIVE"
+    );
+
+    return pockets.map((pocket) => {
+      const pocketId = String(pocket.id || "");
+      const category = String(pocket.category || "GASTO").toUpperCase();
+      const typeRule = String(pocket.typeRule || "");
+      const isRemaining = typeRule === "-";
+
+      const targetAmount = isRemaining
+        ? roundToTwoDecimals(Math.max(0, computedRemainingPocketValue))
+        : getPocketAssignedValue(pocket, expectedTotalIncome);
+
+      const pocketMovements = (viewData?.movements ?? []).filter((movement) => {
+        const destinationType = String(movement.destinationType || "").toUpperCase();
+        const destinationReference = String(movement.referenceDestination || "");
+        return destinationType === "BOLSA" && destinationReference === pocketId;
+      });
+
+      const incomeTotal = pocketMovements
+        .filter((movement) => String(movement.movementType || movement.type || "").toUpperCase() === "INGRESO")
+        .reduce((sum, movement) => sum + Number(movement.value || 0), 0);
+      const expenseTotal = pocketMovements
+        .filter((movement) => String(movement.movementType || movement.type || "").toUpperCase() !== "INGRESO")
+        .reduce((sum, movement) => sum + Number(movement.value || 0), 0);
+
+      const initialBalance = Number(
+        pocket.initialBalance ?? pocket.startingBalance ?? pocket.initialSaldo ?? pocket.balance ?? 0
+      );
+      const availableAmount = roundToTwoDecimals(initialBalance + incomeTotal - expenseTotal);
+      const fundingPercent = targetAmount > 0
+        ? roundToTwoDecimals((availableAmount / targetAmount) * 100)
+        : availableAmount > 0
+          ? 100
+          : 0;
+      const fundingPercentBounded = Math.max(0, Math.min(100, fundingPercent));
+
+      const statusLabel = fundingPercent > 100 ? "Excedido" : fundingPercent >= 75 ? "Saludable" : "Atencion";
+      const statusColor = fundingPercent > 100 ? "#DC2626" : fundingPercent >= 75 ? "#22C55E" : "#D97706";
+
+      const commitmentsCount = (viewData?.commitments ?? []).filter((item) => {
+        const originType = String(item.commitmentOriginType || "").toUpperCase();
+        const originId = String(item.originId || "");
+        return originType === "BOLSA" && originId === pocketId;
+      }).length;
+
+      const lastMovement = pocketMovements.length > 0 ? pocketMovements[pocketMovements.length - 1] : null;
+      let lastMovementLabel = "Sin movimiento";
+      if (lastMovement) {
+        const rawDate = String(lastMovement.createdAt || lastMovement.date || "");
+        const movementDate = new Date(rawDate);
+        const today = new Date();
+        lastMovementLabel = movementDate.toDateString() === today.toDateString()
+          ? "Hoy"
+          : String(lastMovement.date || "Reciente");
+      }
+
+      const categoryColor = category === "AHORRO"
+        ? "#38BDF8"
+        : category === "DEUDA"
+          ? "#EF4444"
+          : category === "GASTO"
+            ? "#F97316"
+            : "#7C3AED";
+
+      return {
+        id: pocketId,
+        name: String(pocket.name || "Bolsa sin nombre"),
+        category,
+        categoryColor,
+        isRemaining,
+        targetAmount,
+        availableAmount,
+        commitmentsCount,
+        statusLabel,
+        statusColor,
+        fundingPercent,
+        fundingPercentBounded,
+        lastMovementLabel,
+      };
+    });
+  }, [viewData?.pockets, viewData?.movements, viewData?.commitments, computedRemainingPocketValue, expectedTotalIncome]);
+
+  const remainingPocketCard = pocketVisualItems.find((item) => item.isRemaining) ?? null;
+  const regularPocketCards = pocketVisualItems.filter((item) => !item.isRemaining);
+
+  const totalAvailableAcrossPockets = roundToTwoDecimals(
+    pocketVisualItems.reduce((acc, item) => acc + item.availableAmount, 0)
+  );
+
+  const distributionByCategory = {
+    ahorro: roundToTwoDecimals(
+      pocketVisualItems
+        .filter((item) => item.category === "AHORRO")
+        .reduce((acc, item) => acc + item.availableAmount, 0)
+    ),
+    gasto: roundToTwoDecimals(
+      pocketVisualItems
+        .filter((item) => item.category === "GASTO")
+        .reduce((acc, item) => acc + item.availableAmount, 0)
+    ),
+    deuda: roundToTwoDecimals(
+      pocketVisualItems
+        .filter((item) => item.category === "DEUDA")
+        .reduce((acc, item) => acc + item.availableAmount, 0)
+    ),
+  };
+
+  const distributionTotal = roundToTwoDecimals(
+    distributionByCategory.ahorro + distributionByCategory.gasto + distributionByCategory.deuda
+  );
+
+  const donutCircumference = 2 * Math.PI * 44;
+  const donutSegments = [
+    { key: "ahorro", label: "Ahorro", value: distributionByCategory.ahorro, color: "#38BDF8" },
+    { key: "gasto", label: "Gasto", value: distributionByCategory.gasto, color: "#F97316" },
+    { key: "deuda", label: "Deuda", value: distributionByCategory.deuda, color: "#EF4444" },
+  ]
+    .filter((segment) => segment.value > 0)
+    .reduce<Array<{ key: string; label: string; value: number; color: string; dashLength: number; dashOffset: number }>>((acc, segment) => {
+      const previousLength = acc.reduce((total, current) => total + current.dashLength, 0);
+      const dashLength = distributionTotal > 0 ? (segment.value / distributionTotal) * donutCircumference : 0;
+      acc.push({ ...segment, dashLength, dashOffset: -previousLength });
+      return acc;
+    }, []);
+
+  const membersCompletedCount = initializationMembers.filter((member) => {
+    const memberId = String(member.id || "");
+    const income = (viewData?.incomes ?? []).find((item) => String(item.memberId || "") === memberId);
+    const planningState = String(income?.planningState || "PLANIFICADO").toUpperCase();
+    return planningState !== "PLANIFICADO";
+  }).length;
+  const tasksCompletedCount = (viewData?.commitments ?? []).filter((item) => {
+    const state = String(item.state || "").toUpperCase();
+    return state === "PAGADO" || state === "COMPLETADO";
+  }).length;
+  const movementsExecutedCount = (viewData?.movements ?? []).length;
+
   useEffect(() => {
     if (activeTab !== "inicio") return;
     if (activeModal !== null) return;
     if (isLoading) return;
     if (!viewData) return;
-    if (hasShownAutoInitialization) return;
-
-    const shouldOpenWizard = !hasMembers || !hasCycle || !hasIncomes;
-    if (!shouldOpenWizard) {
-      setHasShownAutoInitialization(true);
+    if (initializationMissingStep === null) {
       return;
     }
 
-    const nextStep = !hasMembers ? 0 : !hasCycle ? 1 : 2;
-    setWizardStep(nextStep);
+    setWizardStep(initializationMissingStep);
     setWizardError(null);
-    setHasShownAutoInitialization(true);
     openModal("wizardInitialization");
   }, [
     activeModal,
     activeTab,
-    hasCycle,
-    hasIncomes,
-    hasMembers,
-    hasShownAutoInitialization,
+    initializationMissingStep,
     isLoading,
     viewData,
   ]);
@@ -645,6 +1046,11 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         (item) => String(item.state || "").toUpperCase() === "PLANIFICADO"
       );
 
+      if (!plannedPeriod) {
+        showFeedback("Solo puedes ingresar saldo de bolsa cuando el ciclo esta en estado PLANIFICADO.");
+        return;
+      }
+
       setBalancePocketId("");
       setBalancePocketLabel("Selecciona una bolsa");
       setBalancePeriodId(plannedPeriod ? String(plannedPeriod.id || "") : "");
@@ -657,7 +1063,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
     if (modal === "formRegisterMovement") {
       const activeCycle = (viewData?.periods ?? []).find((item) => {
         const state = String(item.state || "").toUpperCase();
-        return state === "ACTIVO" || state === "ABIERTO";
+        return state === "ABIERTO";
       });
 
       const plannedCycle = (viewData?.periods ?? []).find(
@@ -685,7 +1091,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       setMovementSubmitError(null);
       setMovementPeriodId(selectedCycle ? String(selectedCycle.id || "") : "");
       setMovementPeriodLabel(
-        selectedCycle ? String(selectedCycle.name || selectedCycle.id || "") : "Sin ciclo ACTIVO o PLANIFICADO"
+        selectedCycle ? String(selectedCycle.name || selectedCycle.id || "") : "Sin ciclo ABIERTO o PLANIFICADO"
       );
     }
 
@@ -696,6 +1102,17 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   };
 
   const handleQuickActionSelect = (target: ModalKey) => {
+    if (target === "formRegisterBalance") {
+      const hasPlannedPeriod = (viewData?.periods ?? []).some(
+        (item) => String(item.state || "").toUpperCase() === "PLANIFICADO"
+      );
+
+      if (!hasPlannedPeriod) {
+        showFeedback("Solo puedes ingresar saldo de bolsa cuando el ciclo esta en estado PLANIFICADO.");
+        return;
+      }
+    }
+
     setActiveModal(null);
     setTimeout(() => openModal(target), 80);
   };
@@ -703,6 +1120,10 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const handleOpenMemberDetail = (memberId: string) => {
     const member = (viewData?.members ?? []).find((item) => String(item.id || "") === memberId) ?? null;
     setSelectedMemberId(memberId);
+    setMemberName(String(member?.name || ""));
+    setMemberEmail(String(member?.emailMember || ""));
+    setMemberBank(String(member?.bank || ""));
+    setMemberContract(String(member?.contract || ""));
     setMemberActive(String(member?.state || "").toUpperCase() === "ACTIVE");
     setMemberDetailSaveError(null);
     // preload income info for edit
@@ -824,6 +1245,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         period: commitmentPeriodicidad as "MENSUAL" | "BIMESTRAL" | "TRIMESTRAL" | "SEMESTRAL" | "ANUAL" | "UNICO",
       });
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.commitmentUpdated);
       closeModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -844,6 +1266,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       setCommitmentDetailError(null);
       await deleteFamilyCommitment(workspace.familyId, selectedCommitmentId, String(currentCycle.id || ""));
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.commitmentDeleted);
       closeModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -882,6 +1305,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         category: categoryMap[bagCategory],
       });
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.pocketUpdated);
       closeModal();
     } catch (error) {
       setPocketDetailError("No se pudo guardar la bolsa. Revisa los datos.");
@@ -897,6 +1321,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       setPocketDetailError(null);
       await deleteFamilyPocketCascade(workspace.familyId, selectedPocketId, String(currentCycle.id || ""));
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.pocketDeleted);
       closeModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -914,16 +1339,27 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
     if (!selectedMemberId) {
       return;
     }
+
+    if (!memberName.trim() || !memberEmail.trim() || !memberBank.trim() || !memberContract.trim()) {
+      setMemberDetailSaveError("Completa los campos requeridos del miembro.");
+      return;
+    }
+
     try {
       setIsSavingMemberDetail(true);
       setMemberDetailSaveError(null);
       await updateFamilyMember(workspace.familyId, selectedMemberId, {
+        name: memberName.trim(),
+        emailMember: memberEmail.trim(),
+        bank: memberBank.trim(),
+        contract: memberContract.trim(),
         state: memberActive ? "ACTIVE" : "INACTIVE",
       });
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.memberUpdated);
       closeModal();
     } catch (error) {
-      console.error("Dashboard update member detail error:", error);
+      showFeedback(getErrorMessage(error, "No se pudieron guardar los cambios del miembro."));
       setMemberDetailSaveError("No se pudieron guardar los cambios del miembro. Intenta de nuevo.");
     } finally {
       setIsSavingMemberDetail(false);
@@ -938,9 +1374,10 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       if (!Number.isFinite(valueNum)) throw new Error("INVALID_VALUE");
       await updateFamilyInitialIncome(workspace.familyId, String(budgetCycle.id || budgetCycle?.id || ""), selectedMemberId, roundToTwoDecimals(valueNum));
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.incomeUpdated);
       closeModal();
     } catch (error) {
-      console.error("Error updating income:", error);
+      showFeedback(getErrorMessage(error, "No se pudo actualizar el ingreso del miembro."));
     } finally {
       setIsSavingEditIncome(false);
     }
@@ -952,16 +1389,27 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       setIsSavingMemberDetail(true);
       await deleteFamilyMemberCascade(workspace.familyId, selectedMemberId);
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.memberDeleted);
       closeModal();
     } catch (error) {
-      console.error("Error deleting member:", error);
-      Alert.alert("Error", "No se pudo eliminar el miembro.");
+      showFeedback(getErrorMessage(error, "No se pudo eliminar el miembro."));
     } finally {
       setIsSavingMemberDetail(false);
     }
   };
 
   const closeModal = () => {
+    const isInitializationFlowOpen =
+      activeModal === "wizardInitialization" ||
+      (returnToWizardStep !== null && (activeModal === "formNewMember" || activeModal === "formNewPeriod"));
+
+    if (isInitializationFlowOpen && !isInitializationComplete) {
+      setReturnToWizardStep(null);
+      setActiveModal(null);
+      onBackToFamilies();
+      return;
+    }
+
     if (activeModal === "detailCommitment" && commitmentReturnModal) {
       setActiveModal(commitmentReturnModal);
       setCommitmentReturnModal(null);
@@ -994,6 +1442,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
     try {
       setIsRefreshing(true);
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.dashboardRefreshed);
     } finally {
       setIsRefreshing(false);
     }
@@ -1013,6 +1462,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       });
 
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.memberCreated);
       if (returnToWizardStep !== null) {
         setWizardStep(returnToWizardStep);
         setReturnToWizardStep(null);
@@ -1021,7 +1471,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         closeModal();
       }
     } catch (error) {
-      console.error("Dashboard create member error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo guardar el miembro."));
       setMemberSubmitError("No se pudo guardar el miembro. Revisa los datos e intenta de nuevo.");
     } finally {
       setIsSavingMember(false);
@@ -1039,6 +1489,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       });
 
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.periodCreated);
       if (returnToWizardStep !== null) {
         setWizardStep(returnToWizardStep);
         setReturnToWizardStep(null);
@@ -1047,7 +1498,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         closeModal();
       }
     } catch (error) {
-      console.error("Dashboard create period error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo guardar el periodo."));
       setPeriodSubmitError("No se pudo guardar el periodo. Verifica el ID e intenta de nuevo.");
     } finally {
       setIsSavingPeriod(false);
@@ -1098,9 +1549,10 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       });
 
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.pocketCreated);
       closeModal();
     } catch (error) {
-      console.error("Dashboard create pocket error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo guardar la bolsa."));
       const message = error instanceof Error ? error.message : "";
       if (message.includes("ONLY_ONE_REMAINING_POCKET_ALLOWED")) {
         setPocketSubmitError("Solo se permite una bolsa tipo Restante.");
@@ -1137,9 +1589,10 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       });
 
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.commitmentCreated);
       closeModal();
     } catch (error) {
-      console.error("Dashboard create commitment error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo guardar el compromiso."));
       setCommitmentSubmitError("No se pudo guardar el compromiso. Revisa los datos e intenta de nuevo.");
     } finally {
       setIsSavingCommitment(false);
@@ -1158,9 +1611,10 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       });
 
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.pocketBalanceCreated);
       closeModal();
     } catch (error) {
-      console.error("Dashboard create pocket balance error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo registrar el saldo inicial."));
       setBalanceSubmitError("No se pudo registrar el saldo inicial. Revisa los datos e intenta de nuevo.");
     } finally {
       setIsSavingBalance(false);
@@ -1225,9 +1679,10 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       });
 
       await refreshDashboard();
+      showSuccess(SUCCESS_MESSAGES.movementCreated);
       closeModal();
     } catch (error) {
-      console.error("Dashboard create movement error:", error);
+      showFeedback(getErrorMessage(error, "No se pudo guardar el movimiento."));
       const message = error instanceof Error ? error.message : "";
       if (message.includes("PLANNED_CYCLE_BLOCKS_MOVEMENTS")) {
         setMovementSubmitError("No puedes registrar movimientos en ciclos PLANIFICADOS.");
@@ -1259,7 +1714,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
     if (wizardStep === 1) {
       const hasPeriod = (viewData?.periods ?? []).some((item) => {
         const state = String(item.state || "").toUpperCase();
-        return state === "PLANIFICADO" || state === "ACTIVO" || state === "ABIERTO";
+        return state === "PLANIFICADO" || state === "ABIERTO";
       });
 
       if (!hasPeriod) {
@@ -1328,9 +1783,12 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       }
 
       await refreshDashboard();
-      closeModal();
+      showSuccess(SUCCESS_MESSAGES.initialIncomesSaved);
+      setReturnToWizardStep(null);
+      setWizardError(null);
+      setActiveModal(null);
     } catch (error) {
-      console.error("Dashboard create initial incomes error:", error);
+      showFeedback(getErrorMessage(error, "No se pudieron guardar los ingresos iniciales."));
       setWizardError("No se pudieron guardar los ingresos iniciales. Intenta nuevamente.");
     } finally {
       setIsSavingWizardIncomes(false);
@@ -1409,14 +1867,20 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         contract: "Sin definir",
         state: "INACTIVE",
       };
-      const memberEmail = String((member as any).emailMember || (member as any).email || "Sin definir");
+      const memberEmailValue = memberEmail || String((member as any).emailMember || (member as any).email || "");
       const normalizedCurrentUserEmail = String(currentUserEmail || "").trim().toLowerCase();
-      const normalizedMemberEmail = String(memberEmail || "").trim().toLowerCase();
-      const canClosePlanningForMember = !!normalizedCurrentUserEmail && normalizedCurrentUserEmail === normalizedMemberEmail;
-      const memberStateCycle = String((member as any).stateCycle || "Sin definir").trim().toUpperCase();
-      const memberStateCycleStyles = memberStateCycle === "PLANIFICADO"
+      const normalizedMemberEmail = String(memberEmailValue || "").trim().toLowerCase();
+      const memberIncome = (viewData?.incomes ?? []).find(
+        (income) => String(income.memberId || "") === String((member as any).id || selectedMemberId || "")
+      );
+      const memberPlanningState = String(memberIncome?.planningState || "Sin definir").trim().toUpperCase();
+      const canClosePlanningForMember =
+        !!normalizedCurrentUserEmail &&
+        normalizedCurrentUserEmail === normalizedMemberEmail &&
+        memberPlanningState === "PLANIFICADO";
+      const memberPlanningStateStyles = memberPlanningState === "PLANIFICADO"
         ? { backgroundColor: "#DBEAFE", color: "#1D4ED8" }
-        : memberStateCycle === "CERRADO"
+        : memberPlanningState === "CERRADO"
           ? { backgroundColor: "#DCFCE7", color: "#059669" }
           : { backgroundColor: theme.colors.surfaceVariant, color: uiColors.onSurface };
 
@@ -1431,8 +1895,8 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
           
                     <TextInput mode="outlined" theme={modalTextInputTheme}
             label="Nombre"
-            value={String(member.name || "Sin definir")}
-            editable={false}
+                      value={memberName}
+                      onChangeText={setMemberName}
                       style={[modalInputFieldStyle, styles.memberDetailFirstField]}
           />
 
@@ -1441,21 +1905,23 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                       theme={modalTextInputTheme}
                       label="Correo Miembro"
                       value={memberEmail}
-                      editable={false}
+                      onChangeText={setMemberEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
                       style={modalInputFieldStyle}
                     />
           
                     <TextInput mode="outlined" theme={modalTextInputTheme}
             label="Banco"
-            value={String(member.bank || "Sin definir")}
-            editable={false}
+            value={memberBank}
+            onChangeText={setMemberBank}
             style={modalInputFieldStyle}
           />
           
                     <TextInput mode="outlined" theme={modalTextInputTheme}
             label="Contrato ingresos"
-            value={String(member.contract || "Sin definir")}
-            editable={false}
+            value={memberContract}
+            onChangeText={setMemberContract}
             style={modalInputFieldStyle}
           />
 
@@ -1470,7 +1936,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
           <View style={styles.detailGroup}>
             <View style={styles.memberStateRow}>
               <PaperText variant="labelLarge" style={[styles.formLabel, styles.memberStateLabel, { color: uiColors.onSurface }]} numberOfLines={1}>Estado presupuesto:</PaperText>
-              <PaperText style={[styles.memberStateValue, { color: memberStateCycleStyles.color }]} numberOfLines={1}>{memberStateCycle}</PaperText>
+              <PaperText style={[styles.memberStateValue, { color: memberPlanningStateStyles.color }]} numberOfLines={1}>{memberPlanningState}</PaperText>
             </View>
           </View>
 
@@ -1489,7 +1955,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
             <Card mode="elevated" style={[styles.miniCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
               <Card.Content>
                 {selectedMemberCommitments.map((item, index) => (
-                  <Pressable key={String(item.id || `member-commitment-${index}`)} style={styles.entityRow} onPress={() => handleOpenCommitmentDetail(String(item.id || ""))}>
+                  <Pressable key={String(item.id || `member-commitment-${index}`)} style={[styles.entityRow, { backgroundColor: uiColors.metricBackground, borderBottomColor: uiColors.metricBorder }]} onPress={() => handleOpenCommitmentDetail(String(item.id || ""))}>
                     <View style={styles.pendingIconWrap}>
                       <Icon source="file-document-outline" size={20} color={uiColors.commitmentAccent} />
                     </View>
@@ -1700,7 +2166,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
             <Card mode="elevated" style={[styles.miniCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
               <Card.Content>
                 {selectedPocketCommitments.map((item, index) => (
-                  <Pressable key={String(item.id || `bag-commitment-${index}`)} style={styles.entityRow} onPress={() => handleOpenCommitmentDetail(String(item.id || ""))}>
+                  <Pressable key={String(item.id || `bag-commitment-${index}`)} style={[styles.entityRow, { backgroundColor: uiColors.metricBackground, borderBottomColor: uiColors.metricBorder }]} onPress={() => handleOpenCommitmentDetail(String(item.id || ""))}>
                     <View style={styles.pendingIconWrap}>
                       <Icon source="file-document-outline" size={20} color={uiColors.commitmentAccent} />
                     </View>
@@ -1930,7 +2396,9 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
           </View>
 
           <View style={styles.modalActions}>
-            <Button mode="contained" onPress={() => undefined}>Cerrar periodo</Button>
+            {state === "ABIERTO" ? (
+              <Button mode="contained" onPress={() => undefined}>Cerrar periodo</Button>
+            ) : null}
           </View>
         </>
       );
@@ -2897,13 +3365,13 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                 <>
                   <PaperText variant="titleMedium" style={styles.wizardTaskTitle}>Segundo configura el ciclo</PaperText>
                   <PaperText style={styles.helperText}>Crea el periodo de trabajo actual antes de registrar ingresos.</PaperText>
-                  <PaperText style={styles.wizardCycleLabel}>{hasOpenOrPlannedCycle ? `Ciclo detectado: ${currentCycleLabel}` : "No se detectÃ³ un ciclo ABIERTO o PLANIFICADO."}</PaperText>
+                  <PaperText style={styles.wizardCycleLabel}>{hasOpenOrPlannedCycle ? `Ciclo detectado: ${currentCycleLabel}` : "Sin un ciclo ABIERTO o PLANIFICADO."}</PaperText>
                   <Button
                     mode="contained"
                     style={[styles.wizardPrimaryTeal, hasOpenOrPlannedCycle && styles.disabledButton]}
                     contentStyle={styles.sheetButtonContent}
                     disabled={hasOpenOrPlannedCycle}
-                    onPress={() => openInitializationAction("formNewPeriod", 1)}
+                    onPress={() => openInitializationAction("formNewPeriod", 2)}
                   >
                     Crear ciclo
                   </Button>
@@ -2987,17 +3455,17 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
+    <View style={[styles.container, { backgroundColor: uiColors.pageBackground }]}> 
       <TopLoadingBar visible={isLoading} />
 
-      <Appbar.Header style={[styles.topBar, { backgroundColor: theme.colors.surface }]}>
-        <Appbar.Action icon="account-circle-outline" onPress={onBackToFamilies} />
+      <Appbar.Header style={[styles.topBar, { backgroundColor: uiColors.glassBackground, borderColor: uiColors.navBorder, shadowColor: uiColors.shadow }]}>
+        <Appbar.Action icon="account-circle-outline" iconColor={uiColors.onSurface} onPress={onBackToFamilies} />
         <Appbar.Content
-          title={workspace.familyName}
-          style={styles.topBarContent}
-          titleStyle={styles.workspaceName}
+          title="PocketUs"
+          style={styles.topBarContentLeft}
+          titleStyle={[styles.workspaceName, { color: uiColors.onSurface }]}
         />
-        <Appbar.Action icon="bell-outline" onPress={() => undefined} />
+        <Appbar.Action icon="bell-outline" iconColor={uiColors.onSurface} onPress={() => undefined} />
       </Appbar.Header>
 
       <ScrollView
@@ -3015,87 +3483,158 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       >
         {activeTab === "inicio" && (
           <>
+            <View style={styles.dashboardIntroRow}>
+              <View style={styles.dashboardIntroLeft}>
+                <View style={styles.greetingRow}>
+                  <Icon source="hand-wave-outline" size={18} color={uiColors.navActiveText} />
+                  <PaperText style={[styles.greetingText, { color: uiColors.onSurface }]}>
+                    {`Hola, ${String(myMember?.name || "Usuario")}`}
+                  </PaperText>
+                </View>
+                <PaperText style={[styles.familySubText, { color: uiColors.mutedText }]} numberOfLines={1}>
+                  {workspace.familyName}
+                </PaperText>
+              </View>
+              <PaperText style={[styles.cycleNameText, { color: uiColors.onSurface }]} numberOfLines={1}>
+                {String(budgetCycle?.name || budgetCycle?.id || "Sin ciclo")}
+              </PaperText>
+            </View>
+
             <Card
               mode="elevated"
               onPress={() => openModal("detailPeriod")}
               style={[styles.summaryCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}
             >
               <Card.Content>
+                <View style={styles.budgetHeaderRow}>
                   <View style={styles.sectionHeaderRow}>
                     <Icon source="chart-line" size={20} color={uiColors.periodAccent} />
-                    <PaperText variant="titleMedium" style={styles.summaryTitle}>Presupuesto mensual</PaperText>
+                    <PaperText variant="titleMedium" style={styles.summaryTitle}>Presupuesto del ciclo</PaperText>
                   </View>
-                  <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>Control y distribucion del periodo actual.</PaperText>
-
-                <View style={styles.metricsRow}>
-                  <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder, gap: 8 }]}>
-                    <PaperText style={[styles.metricLabel, { color: theme.colors.onSurfaceVariant }]}>Periodo:</PaperText>
-                    <View style={styles.summaryPeriodRow}>
-                      <PaperText style={[styles.metricValue, { color: uiColors.onSurface }]} numberOfLines={1}>{String(budgetCycle?.name || budgetCycle?.id || "Sin ciclo")}</PaperText>
-                      <PaperText style={[styles.metricValueStrong, { color: uiColors.onSurface }]}>{toCurrency(expectedTotalIncome)}</PaperText>
-                    </View>
-                    <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>{`Te faltan ${pendingCommitments.length} compromisos`}</PaperText>
-                    <View style={styles.summaryPeriodRow}>
-                      <PaperText style={[styles.metricValue, { color: uiColors.onSurface, flex: 1 }]} numberOfLines={1}>
-                        {`Proximo: ${nextCommitment ? String(nextCommitment.commitmentConcept || nextCommitment.name || nextCommitment.reference || "Compromiso") : "Sin pendientes"}`}
-                      </PaperText>
-                      <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>
-                        {nextCommitment ? formatDisplayDate(String(nextCommitment.endedDate || "")) : "Sin fecha"}
-                      </PaperText>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={styles.progressHeader}>
-                  <PaperText style={[styles.metricLabel, { color: theme.colors.onSurfaceVariant }]}>Distribuido</PaperText>
-                  <PaperText style={[styles.metricValue, { color: uiColors.onSurface }]}>{toPercent(monthlyProgress)}</PaperText>
-                </View>
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: `${monthlyProgress}%` }]} />
+                  <PaperText
+                    style={[
+                      styles.cycleStateChip,
+                      {
+                        color: String(budgetCycle?.state || "").toUpperCase() === "ABIERTO" ? "#38BDF8" : "#A78BFA",
+                      },
+                    ]}
+                  >
+                    {String(budgetCycle?.state || "PLANIFICADO").toUpperCase()}
+                  </PaperText>
                 </View>
 
                 <View style={styles.metricsRow}>
                   <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={[styles.metricLabel, { color: uiColors.periodAccent }]}>Ahorros</PaperText>
-                    <PaperText style={[styles.metricValueStrong, { color: uiColors.periodAccent }]}>{toCurrency(savingsTotal)}</PaperText>
+                    <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>Ingreso esperado</PaperText>
+                    <PaperText style={[styles.metricValueStrong, { color: "#38BDF8" }]}>{toCurrency(expectedTotalIncome)}</PaperText>
                   </View>
                   <View style={[styles.metricBox, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}> 
-                    <PaperText style={[styles.metricLabel, { color: uiColors.commitmentAccent }]}>Gastos</PaperText>
-                    <PaperText style={[styles.metricValueStrong, { color: uiColors.commitmentAccent }]}>{toCurrency(expensesTotal)}</PaperText>
+                    <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>Ingreso real</PaperText>
+                    <PaperText style={[styles.metricValueStrong, { color: "#22C55E" }]}>{toCurrency(distributedTotal)}</PaperText>
                   </View>
+                </View>
+
+                <View style={styles.progressHeader}>
+                  <PaperText style={[styles.metricLabel, { color: uiColors.mutedText }]}>Ejecucion</PaperText>
+                  <PaperText style={[styles.metricValue, { color: uiColors.onSurface }]}>{toPercent(monthlyProgress)}</PaperText>
+                </View>
+                <View style={[styles.progressTrack, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                  <View style={[styles.progressFill, { width: `${monthlyProgress}%` }]} />
+                </View>
+
+                <View style={styles.summaryPeriodRow}>
+                  <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>{`Compromisos pendientes: ${pendingCommitments.length}`}</PaperText>
+                  <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>{nextCommitment ? formatDisplayDate(String(nextCommitment.endedDate || "")) : "Sin fecha"}</PaperText>
                 </View>
               </Card.Content>
             </Card>
+
+            <Card mode="elevated" style={[styles.templatesCard, styles.planningCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
+              <Card.Content>
+                <View style={styles.budgetHeaderRow}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Icon source="timeline-check-outline" size={20} color={uiColors.planningAccent} />
+                    <PaperText variant="titleMedium" style={styles.summaryTitle}>Mi planificacion</PaperText>
+                  </View>
+                  <PaperText style={[styles.planningStateChip, { color: myPlanningStatusColor }]}>{myPlanningStatusLabel}</PaperText>
+                </View>
+
+                {myPlanningCardStatus === "PLANIFICADO" ? (
+                  <>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Aun no has cerrado tu planificacion.</PaperText>
+                    <Button mode="contained" style={styles.wizardPrimaryIndigo} contentStyle={styles.sheetButtonContent} onPress={() => (myMemberId ? handleOpenMemberDetail(myMemberId) : undefined)}>
+                      Cerrar planificacion
+                    </Button>
+                  </>
+                ) : myPlanningCardStatus === "CERRADO_PENDIENTE" ? (
+                  <>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>{`Tareas pendientes: ${myPendingTasksCount}`}</PaperText>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Mover dinero: {Math.max(0, myPendingTasksCount - 0)}</PaperText>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Pagar compromisos: {myPendingTasksCount}</PaperText>
+                    <Button mode="contained" style={styles.wizardPrimaryIndigo} contentStyle={styles.sheetButtonContent} onPress={() => (myMemberId ? handleOpenMemberDetail(myMemberId) : undefined)}>
+                      Ver mis tareas
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>{`Tareas completadas: ${myGeneratedMovementsCount}`}</PaperText>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>{`Movimientos generados: ${myGeneratedMovementsCount}`}</PaperText>
+                    <Button mode="contained" style={styles.wizardPrimaryIndigo} contentStyle={styles.sheetButtonContent} onPress={() => (myMemberId ? handleOpenMemberDetail(myMemberId) : undefined)}>
+                      Ver detalle
+                    </Button>
+                  </>
+                )}
+              </Card.Content>
+            </Card>
+
             <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}> 
               <Card.Content>
                 <View style={styles.sectionHeaderRow}>
-                  <Icon source="account-group" size={20} color={uiColors.memberAccent} />
-                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Miembros</PaperText>
+                  <Icon source="account-group" size={20} color={uiColors.periodAccent} />
+                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Participantes del ciclo</PaperText>
                 </View>
                 {initializationMembers.length === 0 ? (
-                  <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay miembros registrados.</PaperText>
+                  <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay participantes registrados.</PaperText>
                 ) : (
                   initializationMembers.map((member, index) => {
                     const memberId = String(member.id || "");
                     const pocketsValue = Number(incomeByMemberId.get(memberId) || 0);
-                    const hasContribution = Number.isFinite(pocketsValue) && pocketsValue > 0;
+                    const memberIncome = (viewData?.incomes ?? []).find((income) => String(income.memberId || "") === memberId);
+                    const planningState = String(memberIncome?.planningState || "PLANIFICADO").toUpperCase();
+                    const memberPendingTasks = (viewData?.commitments ?? []).filter((item) => {
+                      const state = String(item.state || "").toUpperCase();
+                      return (
+                        String(item.commitmentOriginType || "").toUpperCase() === "MIEMBRO" &&
+                        String(item.originId || "") === memberId &&
+                        (state === "PENDIENTE" || state === "RESERVADO")
+                      );
+                    }).length;
+
+                    const statusLabel = planningState === "PLANIFICADO"
+                      ? "Planificacion pendiente"
+                      : memberPendingTasks > 0
+                        ? "Tareas pendientes"
+                        : "Tareas completadas";
+                    const statusColor = planningState === "PLANIFICADO"
+                      ? "#F59E0B"
+                      : memberPendingTasks > 0
+                        ? "#A78BFA"
+                        : "#22C55E";
 
                     return (
                       <Pressable
                         key={memberId || `member-${index}`}
-                        style={styles.memberRow}
+                        style={[styles.participantMiniCard, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}
                         onPress={() => handleOpenMemberDetail(memberId)}
                       >
                         <View style={styles.memberInfoRow}>
-                          <Icon source="account-circle" size={28} color={uiColors.memberAccent} />
-                          <View>
-                          <PaperText style={styles.memberName}>{String(member.name || `Miembro ${index + 1}`)}</PaperText>
-                          <PaperText style={[styles.memberContributionText, { color: uiColors.mutedText }]}>Aporte mensual: {toCurrency(pocketsValue)}</PaperText>
+                          <View style={[styles.participantDot, { backgroundColor: statusColor }]} />
+                          <View style={{ flex: 1 }}>
+                            <PaperText style={[styles.memberName, { color: uiColors.onSurface }]}>{String(member.name || `Miembro ${index + 1}`)}</PaperText>
+                            <PaperText style={[styles.memberContributionText, { color: uiColors.mutedText }]}>Aporte mensual: {toCurrency(pocketsValue)}</PaperText>
+                            <PaperText style={[styles.memberContributionText, { color: statusColor }]}>{statusLabel}</PaperText>
                           </View>
                         </View>
-                        <PaperText style={[hasContribution ? styles.memberStatusOk : styles.memberStatusPending, { color: hasContribution ? uiColors.successText : uiColors.warningText }]}>
-                          {hasContribution ? "Completo" : "Pendiente"}
-                        </PaperText>
                       </Pressable>
                     );
                   })
@@ -3107,18 +3646,35 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
               <Card.Content>
                 <View style={styles.sectionHeaderRow}>
                   <Icon source="file-document-alert-outline" size={20} color={uiColors.commitmentAccent} />
-                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Compromisos creados</PaperText>
+                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Compromisos del ciclo</PaperText>
                 </View>
-                <PaperText variant="bodySmall" style={[styles.helperText, { color: uiColors.mutedText }]}>
-                  {`Total creados: ${createdCommitments.length} | Pendientes: ${pendingCreatedCommitments.length} (${toCurrency(pendingCreatedCommitmentsTotal)})`}
-                </PaperText>
+
+                <View style={styles.kpiGrid}>
+                  <View style={[styles.kpiItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.kpiLabel, { color: uiColors.mutedText }]}>Total</PaperText>
+                    <PaperText style={[styles.kpiValue, { color: uiColors.onSurface }]}>{createdCommitments.length}</PaperText>
+                  </View>
+                  <View style={[styles.kpiItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.kpiLabel, { color: "#F59E0B" }]}>Pendientes</PaperText>
+                    <PaperText style={[styles.kpiValue, { color: "#F59E0B" }]}>{pendingCreatedCommitments.length}</PaperText>
+                  </View>
+                  <View style={[styles.kpiItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.kpiLabel, { color: "#22C55E" }]}>Pagados</PaperText>
+                    <PaperText style={[styles.kpiValue, { color: "#22C55E" }]}>{paidCreatedCommitments}</PaperText>
+                  </View>
+                  <View style={[styles.kpiItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.kpiLabel, { color: uiColors.dangerAccent }]}>Vencidos</PaperText>
+                    <PaperText style={[styles.kpiValue, { color: uiColors.dangerAccent }]}>{overdueCreatedCommitments}</PaperText>
+                  </View>
+                </View>
+
                 {createdCommitments.length === 0 ? (
                   <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay compromisos con cuenta origen Bolsa en este momento.</PaperText>
                 ) : (
                   createdCommitments.map((item, index) => (
-                    <Pressable key={String(item.id || `pending-${index}`)} style={styles.entityRow} onPress={() => handleOpenCommitmentDetail(String(item.id || ""))}>
+                    <Pressable key={String(item.id || `pending-${index}`)} style={[styles.entityRow, { backgroundColor: uiColors.metricBackground, borderBottomColor: uiColors.metricBorder }]} onPress={() => handleOpenCommitmentDetail(String(item.id || ""))}>
                       <View style={styles.pendingIconWrap}>
-                        <Icon source="file-document-outline" size={34} color={uiColors.commitmentAccent} />
+                        <Icon source="file-document-outline" size={26} color={uiColors.commitmentAccent} />
                       </View>
                       <View style={styles.pendingInfo}>
                         <View style={styles.pendingTopRow}>
@@ -3128,7 +3684,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                           <PaperText style={[styles.pendingAmount, styles.pendingAmountText]}>{toCurrency(Number(item.estimatedValue || 0))}</PaperText>
                         </View>
                         <View style={styles.pendingBottomRow}>
-                          <PaperText style={[styles.helperText, styles.pendingDateText]}>Fecha vencimiento: {formatDisplayDate(String(item.endedDate || ""))}</PaperText>
+                          <PaperText style={[styles.helperText, styles.pendingDateText]}>Vence: {formatDisplayDate(String(item.endedDate || ""))}</PaperText>
                         </View>
                       </View>
                     </Pressable>
@@ -3141,88 +3697,179 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
 
         {activeTab === "bolsas" && (
           <>
-            {(viewData?.pockets ?? []).length === 0 ? (
+            <Card mode="elevated" style={[styles.bolsasHeroCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+              <Card.Content>
+                <View style={styles.budgetHeaderRow}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Icon source="wallet-outline" size={20} color={uiColors.pocketAccent} />
+                    <PaperText variant="titleMedium" style={styles.summaryTitle}>Disponible total</PaperText>
+                  </View>
+                  <PaperText
+                    style={[
+                      styles.cycleStateChip,
+                      { color: String(budgetCycle?.state || "").toUpperCase() === "ABIERTO" ? "#38BDF8" : "#A78BFA" },
+                    ]}
+                  >
+                    {String(budgetCycle?.state || "PLANIFICADO").toUpperCase()}
+                  </PaperText>
+                </View>
+
+                <PaperText style={[styles.bolsasHeroAmount, { color: uiColors.onSurface }]}>{toCurrency(totalAvailableAcrossPockets)}</PaperText>
+                <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>{`Bolsas activas: ${pocketVisualItems.length}`}</PaperText>
+              </Card.Content>
+            </Card>
+
+            <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+              <Card.Content>
+                <View style={styles.sectionHeaderRow}>
+                  <Icon source="chart-donut" size={20} color="#38BDF8" />
+                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Distribucion del presupuesto</PaperText>
+                </View>
+
+                <View style={styles.bolsasDistributionRow}>
+                  <View style={styles.bolsasDonutWrap}>
+                    <Svg width={112} height={112}>
+                      <G rotation="-90" origin="56,56">
+                        <Circle cx={56} cy={56} r={44} stroke="rgba(148, 163, 184, 0.2)" strokeWidth={14} fill="none" />
+                        {donutSegments.map((segment) => (
+                          <Circle
+                            key={segment.key}
+                            cx={56}
+                            cy={56}
+                            r={44}
+                            stroke={segment.color}
+                            strokeWidth={14}
+                            strokeLinecap="round"
+                            fill="none"
+                            strokeDasharray={`${segment.dashLength} ${donutCircumference}`}
+                            strokeDashoffset={segment.dashOffset}
+                          />
+                        ))}
+                      </G>
+                    </Svg>
+                    <View style={[styles.bolsasDonutCenter, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                      <PaperText style={[styles.bolsasDonutCenterText, { color: uiColors.onSurface }]}>{toPercent(distributionTotal > 0 ? 100 : 0)}</PaperText>
+                    </View>
+                  </View>
+
+                  <View style={styles.bolsasLegendColumn}>
+                    {[
+                      { label: "Ahorro", color: "#38BDF8", value: distributionByCategory.ahorro },
+                      { label: "Gasto", color: "#F97316", value: distributionByCategory.gasto },
+                      { label: "Deuda", color: "#EF4444", value: distributionByCategory.deuda },
+                    ].map((item) => {
+                      const percentage = distributionTotal > 0 ? roundToTwoDecimals((item.value / distributionTotal) * 100) : 0;
+                      return (
+                        <View key={item.label} style={styles.bolsasLegendItem}>
+                          <View style={[styles.bolsasLegendDot, { backgroundColor: item.color }]} />
+                          <View style={{ flex: 1 }}>
+                            <PaperText style={[styles.bolsasLegendLabel, { color: uiColors.onSurface }]}>{item.label}</PaperText>
+                            <PaperText style={[styles.bolsasLegendValue, { color: uiColors.mutedText }]}>{`${toCurrency(item.value)}  |  ${toPercent(percentage)}`}</PaperText>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              </Card.Content>
+            </Card>
+
+            {remainingPocketCard ? (
+              <Pressable onPress={() => handleOpenBagDetail(remainingPocketCard.id)}>
+                <Card mode="elevated" style={[styles.remainingPocketCard, { backgroundColor: uiColors.remainingPocketBackground, borderColor: uiColors.remainingPocketBorder }]}>
+                  <Card.Content>
+                    <View style={styles.sectionHeaderRow}>
+                      <Icon source="shape-plus" size={20} color="#C4B5FD" />
+                      <PaperText variant="titleMedium" style={styles.summaryTitle}>Bolsa restante</PaperText>
+                    </View>
+                    <PaperText style={[styles.remainingPocketAmount, { color: uiColors.remainingPocketValue }]}>{toCurrency(remainingPocketCard.availableAmount)}</PaperText>
+                    <PaperText style={[styles.remainingPocketCaption, { color: uiColors.remainingPocketLabel }]}>Dinero sin asignar.</PaperText>
+
+                    <View style={styles.pocketMetaGrid}>
+                      <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.remainingPocketMetricBackground, borderColor: uiColors.remainingPocketMetricBorder }]}>
+                        <PaperText style={[styles.remainingMetaLabel, { color: uiColors.remainingPocketLabel }]}>Compromisos</PaperText>
+                        <PaperText style={[styles.remainingMetaValue, { color: uiColors.remainingPocketValue }]}>{remainingPocketCard.commitmentsCount}</PaperText>
+                      </View>
+                      <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.remainingPocketMetricBackground, borderColor: uiColors.remainingPocketMetricBorder }]}>
+                        <PaperText style={[styles.remainingMetaLabel, { color: uiColors.remainingPocketLabel }]}>Fondeado</PaperText>
+                        <PaperText style={[styles.remainingMetaValue, { color: remainingPocketCard.statusColor }]}>
+                          {toPercent(remainingPocketCard.fundingPercent)}
+                        </PaperText>
+                      </View>
+                    </View>
+
+                    <View style={[styles.remainingProgressTrack, { backgroundColor: uiColors.remainingPocketMetricBackground, borderColor: uiColors.remainingPocketMetricBorder }]}>
+                      <View style={[styles.remainingProgressFill, { width: `${remainingPocketCard.fundingPercentBounded}%` }]} />
+                      <PaperText style={[styles.remainingProgressLabel, { color: uiColors.remainingPocketValue }]} numberOfLines={1}>
+                        {`${toCurrency(remainingPocketCard.availableAmount)} / ${toCurrency(remainingPocketCard.targetAmount)}`}
+                      </PaperText>
+                    </View>
+
+                    <View style={styles.pocketStatusRow}>
+                      <PaperText variant="bodySmall" style={[styles.pocketStatusLabel, { color: remainingPocketCard.statusColor }]}>
+                        {`Estado: ${remainingPocketCard.statusLabel}`}
+                      </PaperText>
+                      <PaperText variant="bodySmall" style={[styles.remainingMetaLabel, { color: uiColors.remainingPocketLabel }]}>{`Ultimo movimiento: ${remainingPocketCard.lastMovementLabel}`}</PaperText>
+                    </View>
+                  </Card.Content>
+                </Card>
+              </Pressable>
+            ) : null}
+
+            {regularPocketCards.length === 0 ? (
               <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay bolsas registradas. Crea bolsas para organizar tu dinero.</PaperText>
             ) : (
-              (viewData?.pockets ?? []).map((pocket) => {
-                const pocketId = String(pocket.id || "");
-                const pocketName = String(pocket.name || "Bolsa sin nombre");
-                const isRemainingPocket = String(pocket.typeRule || "") === "-";
-                const pocketRule = isRemainingPocket
-                  ? toCurrency(Math.max(0, computedRemainingPocketValue))
-                  : formatPocketRuleLabel(pocket);
-                const pocketBank = String(pocket.bank || "Sin banco");
-                const pocketContract = String(pocket.contract || "Sin contrato");
-                
-                // Calcular movimientos de ingreso y gasto
-                const pocketMovements = (viewData?.movements ?? []).filter((m) => {
-                  const mType = String(m.destinationType || "").toUpperCase();
-                  const mRef = String(m.referenceDestination || "");
-                  return mType === "BOLSA" && mRef === pocketId;
-                });
-                
-                const incomeMovements = pocketMovements.filter((m) => String(m.movementType || m.type || "").toUpperCase() === "INGRESO");
-                const expenseMovements = pocketMovements.filter((m) => String(m.movementType || m.type || "").toUpperCase() !== "INGRESO");
-                
-                const incomeTotal = incomeMovements.reduce((sum, m) => sum + Number(m.value || 0), 0);
-                const expenseTotal = expenseMovements.reduce((sum, m) => sum + Number(m.value || 0), 0);
-                const initialBalance = Number(pocket.initialBalance ?? pocket.startingBalance ?? pocket.initialSaldo ?? pocket.balance ?? 0);
-                const pocketValue = initialBalance + incomeTotal - expenseTotal;
-                const pocketPercentage = expectedTotalIncome > 0 ? (pocketValue / expectedTotalIncome) * 100 : 0;
-                const pocketFillWidth = expectedTotalIncome > 0 ? Math.max(0, Math.min(pocketPercentage, 100)) : pocketValue !== 0 ? 12 : 0;
-                const pocketPercentageLabel = expectedTotalIncome > 0 ? `${Math.round(Math.max(0, Math.min(pocketPercentage, 100)))}%` : pocketValue !== 0 ? "Sin ingreso" : "0%";
-                const statusLabel = getPocketStatusLabel(pocketPercentage);
-                const statusColor = getPocketStatusColor(pocketPercentage);
-                const lastMovement = pocketMovements.length > 0 ? pocketMovements[pocketMovements.length - 1] : null;
-                
-                let lastMovementLabel = "0";
-                if (lastMovement) {
-                  const movDate = new Date(String(lastMovement.createdAt || lastMovement.date || ""));
-                  const today = new Date();
-                  const isToday = movDate.toDateString() === today.toDateString();
-                  lastMovementLabel = isToday ? "Hoy" : String(lastMovement.date || "Sin fecha");
-                }
-                
+              regularPocketCards.map((item) => {
+                const categoryLabel = item.category === "AHORRO"
+                  ? "Ahorro"
+                  : item.category === "DEUDA"
+                    ? "Deuda"
+                    : "Gasto";
+
                 return (
-                  <Pressable key={pocketId} onPress={() => handleOpenBagDetail(pocketId)}>
+                  <Pressable key={item.id} onPress={() => handleOpenBagDetail(item.id)}>
                   <Card mode="elevated" style={[styles.pocketCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
                     <Card.Content>
-                      <View style={styles.rowWithIconTwoLines}>
-                        <View style={styles.cardIconWrap}>
-                          <Icon source={getPocketIconName(pocketName)} size={34} color={uiColors.pocketAccent} />
+                      <View style={styles.pocketHeaderTopRow}>
+                        <View style={[styles.categoryPill, { backgroundColor: `${item.categoryColor}20`, borderColor: `${item.categoryColor}55` }]}>
+                          <PaperText style={[styles.categoryPillText, { color: item.categoryColor }]}>{categoryLabel}</PaperText>
                         </View>
-                        <View style={styles.rowWithIconContent}>
-                          <View style={styles.pocketTopRow}>
-                            <PaperText variant="titleSmall" style={[styles.pocketName, { color: uiColors.onSurface }]} numberOfLines={1}>{pocketName}</PaperText>
-                            <PaperText variant="titleSmall" style={[styles.pocketValueStrong, { color: uiColors.onSurface }]}>{toCurrency(pocketValue)}</PaperText>
-                          </View>
-                          <View style={styles.pocketBottomRow}>
-                            <PaperText variant="bodySmall" style={[styles.pocketRuleLabel, { color: uiColors.mutedText }]} numberOfLines={1}>{`Regla: ${pocketRule}`}</PaperText>
-                          </View>
+                        <PaperText style={[styles.pocketStateBadge, { color: item.statusColor }]}>{item.statusLabel}</PaperText>
+                      </View>
+
+                      <View style={styles.pocketTopRow}>
+                        <PaperText variant="titleSmall" style={[styles.pocketName, { color: uiColors.onSurface }]} numberOfLines={1}>{item.name}</PaperText>
+                        <PaperText variant="titleSmall" style={[styles.pocketValueStrong, { color: uiColors.onSurface }]}>{toCurrency(item.availableAmount)}</PaperText>
+                      </View>
+
+                      <View style={styles.pocketMetaGrid}>
+                        <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                          <PaperText style={[styles.pocketMetaLabel, { color: uiColors.mutedText }]}>Compromisos</PaperText>
+                          <PaperText style={[styles.pocketMetaValue, { color: uiColors.onSurface }]}>{item.commitmentsCount}</PaperText>
+                        </View>
+                        <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                          <PaperText style={[styles.pocketMetaLabel, { color: uiColors.mutedText }]}>Fondeado</PaperText>
+                          <PaperText style={[styles.pocketMetaValue, { color: item.statusColor }]}>{toPercent(item.fundingPercent)}</PaperText>
                         </View>
                       </View>
                       
                       <View style={[styles.pocketProgressTrack, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                        <View style={[styles.pocketProgressFill, { width: `${pocketFillWidth}%`, backgroundColor: statusColor }]} />
+                        <View style={[styles.pocketProgressFill, { width: `${item.fundingPercentBounded}%`, backgroundColor: item.categoryColor }]} />
                         <PaperText
                           variant="labelSmall"
                           style={[
                             styles.pocketProgressLabel,
-                            { color: expectedTotalIncome > 0 ? uiColors.onSurface : uiColors.mutedText },
+                            { color: uiColors.onSurface },
                           ]}
                           numberOfLines={1}
                         >
-                          {pocketPercentageLabel}
+                          {`${toCurrency(item.availableAmount)} / ${toCurrency(item.targetAmount)}`}
                         </PaperText>
                       </View>
+
                       <View style={styles.pocketStatusRow}>
-                        <PaperText variant="bodySmall" style={[styles.pocketStatusLabel, { color: statusColor }]}>{`Estado: ${statusLabel}`}</PaperText>
-                        <PaperText variant="bodySmall" style={[styles.pocketLastMovement, { color: uiColors.mutedText }]}>{`Ultimo movimiento: ${lastMovementLabel}`}</PaperText>
-                      </View>
-                      
-                      <View style={styles.pocketBankRow}>
-                        <PaperText variant="bodySmall" style={[styles.pocketBank, { color: uiColors.onSurface }]}>{pocketBank}</PaperText>
-                        <PaperText variant="bodySmall" style={[styles.pocketContract, { color: uiColors.onSurface }]}>{pocketContract}</PaperText>
+                        <PaperText variant="bodySmall" style={[styles.pocketStatusLabel, styles.pocketStatusLabelCompact, { color: item.statusColor }]}>{`Estado: ${item.statusLabel}`}</PaperText>
+                        <PaperText variant="bodySmall" style={[styles.pocketLastMovement, styles.pocketLastMovementCompact, { color: uiColors.mutedText }]}>{`Ultimo movimiento: ${item.lastMovementLabel}`}</PaperText>
                       </View>
                     </Card.Content>
                   </Card>
@@ -3230,6 +3877,30 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                 );
               })
             )}
+
+            <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+              <Card.Content>
+                <View style={styles.sectionHeaderRow}>
+                  <Icon source="check-decagram-outline" size={20} color="#22C55E" />
+                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Estado de ejecucion</PaperText>
+                </View>
+
+                  <View style={styles.executionGrid}>
+                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Miembros completados</PaperText>
+                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{`${membersCompletedCount}/${initializationMembers.length}`}</PaperText>
+                  </View>
+                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Tareas completadas</PaperText>
+                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{tasksCompletedCount}</PaperText>
+                  </View>
+                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Movimientos ejecutados</PaperText>
+                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{movementsExecutedCount}</PaperText>
+                  </View>
+                </View>
+              </Card.Content>
+            </Card>
           </>
         )}
 
@@ -3239,67 +3910,146 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
               <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay ciclo ABIERTO o PLANIFICADO. Crea uno para registrar movimientos.</PaperText>
             ) : (
               <>
-                <View style={styles.segmentRow}>
+                <Card mode="elevated" style={[styles.movementHeroCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+                  <Card.Content>
+                    <View style={styles.sectionHeaderRow}>
+                      <Icon source="timeline-clock-outline" size={20} color={uiColors.periodAccent} />
+                      <PaperText variant="titleMedium" style={styles.summaryTitle}>Movimientos</PaperText>
+                    </View>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Historial financiero del ciclo</PaperText>
+                    <PaperText style={[styles.movementHeroAmount, { color: uiColors.onSurface }]}>{toCurrency(movementTotalsByType.totalMoved)}</PaperText>
+                    <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>Total movido del ciclo</PaperText>
+                  </Card.Content>
+                </Card>
+
+                <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+                  <Card.Content>
+                    <View style={styles.movementTypeSummaryGrid}>
+                      {[
+                        { key: "INGRESO", label: "Ingresos", icon: "arrow-down-bold-circle", color: "#22C55E", amount: movementTotalsByType.ingresos, count: movementTotalsByType.ingresosCount },
+                        { key: "RESERVADO", label: "Reservas", icon: "lock-outline", color: "#A78BFA", amount: movementTotalsByType.reservas, count: movementTotalsByType.reservasCount },
+                        { key: "COMPROMISO", label: "Compromisos", icon: "file-document-outline", color: "#F97316", amount: movementTotalsByType.compromisos, count: movementTotalsByType.compromisosCount },
+                        { key: "GASTO", label: "Gastos", icon: "arrow-up-bold-circle", color: "#EF4444", amount: movementTotalsByType.gastos, count: movementTotalsByType.gastosCount },
+                      ].map((item) => (
+                        <View key={item.key} style={[styles.movementTypeSummaryItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                          <View style={styles.sectionHeaderRow}>
+                            <Icon source={item.icon} size={16} color={item.color} />
+                            <PaperText style={[styles.movementTypeSummaryLabel, { color: item.color }]}>{item.label}</PaperText>
+                          </View>
+                          <PaperText style={[styles.movementTypeSummaryAmount, { color: uiColors.onSurface }]}>{toCurrency(item.amount)}</PaperText>
+                          <PaperText style={[styles.movementTypeSummaryCount, { color: uiColors.mutedText }]}>{`${item.count} mov.`}</PaperText>
+                        </View>
+                      ))}
+                    </View>
+                  </Card.Content>
+                </Card>
+
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.movementFilterRow}>
                   {([
                     { key: "TODOS", label: "Todos" },
-                    { key: "ENTRADAS", label: "Entradas" },
-                    { key: "SALIDAS", label: "Salidas" },
-                  ] as const).map((filterOption) => (
-                    <Button
-                      key={filterOption.key}
-                      mode={movementListFilter === filterOption.key ? "contained" : "outlined"}
-                      style={styles.segmentButton}
-                      contentStyle={styles.segmentButtonContent}
-                      buttonColor={movementListFilter === filterOption.key ? theme.colors.primary : undefined}
-                      textColor={movementListFilter === filterOption.key ? theme.colors.onPrimary : theme.colors.onSurface}
-                      onPress={() => setMovementListFilter(filterOption.key)}
-                    >
-                      {filterOption.label}
-                    </Button>
-                  ))}
-                </View>
+                    { key: "INGRESO", label: "Ingresos" },
+                    { key: "RESERVADO", label: "Reservas" },
+                    { key: "COMPROMISO", label: "Compromisos" },
+                    { key: "GASTO", label: "Gastos" },
+                  ] as const).map((filterOption) => {
+                    const isActive = movementListFilter === filterOption.key;
+                    const activeColor = filterOption.key === "RESERVADO" ? "#7C3AED" : "#22C55E";
+                    return (
+                      <Pressable
+                        key={filterOption.key}
+                        style={[
+                          styles.movementFilterChip,
+                          { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder },
+                          isActive && { backgroundColor: `${activeColor}30`, borderColor: `${activeColor}88` },
+                        ]}
+                        onPress={() => setMovementListFilter(filterOption.key)}
+                      >
+                        <PaperText style={[styles.movementFilterChipText, { color: isActive ? activeColor : uiColors.mutedText }]}>{filterOption.label}</PaperText>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
 
-                {filteredMovements.length === 0 ? (
+                <TextInput
+                  mode="outlined"
+                  placeholder="Buscar movimiento o concepto"
+                  value={movementSearchQuery}
+                  onChangeText={setMovementSearchQuery}
+                  left={<TextInput.Icon icon="magnify" />}
+                  style={[styles.movementSearchInput, { backgroundColor: uiColors.metricBackground }]}
+                  textColor={uiColors.onSurface}
+                  placeholderTextColor={uiColors.mutedText}
+                  outlineColor={uiColors.cardBorder}
+                  activeOutlineColor="rgba(34, 197, 94, 0.65)"
+                />
+
+                {movementTimelineGroups.length === 0 ? (
                   <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>
-                    {movementListFilter === "TODOS"
-                      ? "No hay movimientos en el ciclo actual."
-                      : movementListFilter === "ENTRADAS"
-                        ? "No hay entradas en el ciclo actual."
-                        : "No hay salidas en el ciclo actual."}
+                    No hay movimientos para los filtros seleccionados.
                   </PaperText>
                 ) : (
-                  filteredMovements.map((movement) => {
-                const movId = String(movement.id || "");
-                const movType = String(movement.movementType || movement.type || "");
-                const movConcept = String(movement.movementConcept || movement.concept || "Sin concepto");
-                const movValue = Number(movement.value || 0);
-                const isIncome = movType.toUpperCase() === "INGRESO";
-                const movColor = isIncome ? "#059669" : (theme.dark ? "#FB7185" : "#DC2626");
-                const movIcon = isIncome ? "arrow-down-circle" : "arrow-up-circle";
-                
-                const { dateLabel, timeLabel } = formatMovementDateTime(movement as Record<string, unknown>);
-                const fullDateTime = `${dateLabel} ${timeLabel}`;
-                
-                return (
-                  <Pressable key={movId || `mov-${fullDateTime}-${movConcept}`} onPress={() => handleOpenMovementDetail(movement as Record<string, unknown> & { id?: string })}>
-                    <Card mode="elevated" style={[styles.movementCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
-                      <Card.Content>
-                        <View style={styles.movementRowHeader}>
-                          <View style={styles.movementConceptRow}>
-                            <Icon source={movIcon} size={20} color={movColor} />
-                            <PaperText style={[styles.movementConcept, { color: uiColors.onSurface }]}>{movConcept}</PaperText>
-                          </View>
-                          <PaperText style={[styles.movementValueText, { color: movColor }]}>{toCurrency(movValue)}</PaperText>
-                        </View>
-                        <View style={styles.movementRowFooter}>
-                          <PaperText variant="bodySmall" style={[styles.movementDateTime, { color: movColor }]}>{fullDateTime}</PaperText>
-                          <PaperText variant="bodySmall" style={[styles.movementType, { color: movColor }]}>{movType.toUpperCase() || "--"}</PaperText>
-                        </View>
-                      </Card.Content>
-                    </Card>
-                  </Pressable>
-                );
-                  })
+                  movementTimelineGroups.map((group) => (
+                    <View key={group.label} style={styles.timelineGroupBlock}>
+                      <PaperText style={[styles.timelineGroupTitle, { color: uiColors.mutedText }]}>{group.label}</PaperText>
+                      {group.items.map((movement, index) => {
+                        const movId = String(movement.id || "");
+                        const movType = String(movement.movementType || movement.type || "").toUpperCase();
+                        const movConcept = String(movement.movementConcept || movement.concept || "Sin concepto");
+                        const movValueRaw = Number(movement.value || 0);
+                        const movValue = Number.isFinite(movValueRaw) ? Math.abs(movValueRaw) : 0;
+                        const movColor = movType === "INGRESO"
+                          ? "#22C55E"
+                          : movType === "RESERVADO"
+                            ? "#A78BFA"
+                            : movType === "COMPROMISO"
+                              ? "#F97316"
+                              : "#EF4444";
+                        const movIcon = movType === "INGRESO"
+                          ? "arrow-down-bold-circle"
+                          : movType === "RESERVADO"
+                            ? "lock-outline"
+                            : movType === "COMPROMISO"
+                              ? "file-document-outline"
+                              : "arrow-up-bold-circle";
+                        const valueSign = movType === "INGRESO" ? "+" : "-";
+                        const { dateLabel, timeLabel } = formatMovementDateTime(movement as Record<string, unknown>);
+                        const originLabel = resolveMovementPartyLabel(movement.originType, movement.referenceOrigin);
+                        const destinationLabel = resolveMovementPartyLabel(movement.destinationType, movement.referenceDestination);
+                        const fromTask = Boolean(movement.taskId || movement.relatedTaskId || movement.commitmentId || movement.taskReferenceId);
+
+                        return (
+                          <Pressable key={movId || `${group.label}-${index}`} onPress={() => handleOpenMovementDetail(movement as Record<string, unknown> & { id?: string })}>
+                            <Card mode="elevated" style={[styles.movementTimelineCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+                              <Card.Content>
+                                <View style={styles.movementTimelineTopRow}>
+                                  <View style={styles.movementConceptRow}>
+                                    <Icon source={movIcon} size={18} color={movColor} />
+                                    <PaperText style={[styles.movementConcept, { color: uiColors.onSurface }]} numberOfLines={1}>{movConcept}</PaperText>
+                                  </View>
+                                  <PaperText style={[styles.movementTimelineAmount, { color: movColor }]}>{`${valueSign}${toCurrency(movValue)}`}</PaperText>
+                                </View>
+
+                                <View style={styles.movementTimelineMetaRow}>
+                                  <PaperText style={[styles.movementType, { color: movColor }]}>{movType}</PaperText>
+                                  <View style={[styles.movementSourceChip, { borderColor: fromTask ? "rgba(34, 197, 94, 0.45)" : uiColors.metricBorder, backgroundColor: fromTask ? "rgba(34, 197, 94, 0.12)" : uiColors.metricBackground }]}>
+                                    <PaperText style={[styles.movementSourceChipText, { color: fromTask ? "#22C55E" : uiColors.mutedText }]}>{fromTask ? "Desde tarea" : "Manual"}</PaperText>
+                                  </View>
+                                </View>
+
+                                <PaperText style={[styles.movementPathText, { color: uiColors.mutedText }]} numberOfLines={1}>{`Desde: ${originLabel}`}</PaperText>
+                                <PaperText style={[styles.movementPathText, { color: uiColors.mutedText }]} numberOfLines={1}>{`Hacia: ${destinationLabel}`}</PaperText>
+
+                                <View style={styles.movementRowFooter}>
+                                  <PaperText variant="bodySmall" style={[styles.movementDateTime, { color: uiColors.mutedText }]}>{dateLabel}</PaperText>
+                                  <PaperText variant="bodySmall" style={[styles.movementDateTime, { color: uiColors.mutedText }]}>{timeLabel}</PaperText>
+                                </View>
+                              </Card.Content>
+                            </Card>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ))
                 )}
               </>
             )}
@@ -3314,7 +4064,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       <Surface
         style={[
           styles.bottomNav,
-          { backgroundColor: uiColors.navBackground, borderColor: uiColors.navBorder },
+          { backgroundColor: uiColors.navBackground, borderColor: uiColors.navBorder, shadowColor: uiColors.shadow },
           {
             bottom: Math.max(insets.bottom, 10),
             height: 78,
@@ -3323,11 +4073,11 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         elevation={0}
       >
         <View style={styles.navSideGroup}>
-          <Pressable style={styles.navItem} onPress={() => setActiveTab("inicio")}>
+          <Pressable style={[styles.navItem, activeTab === "inicio" && styles.navItemActive, activeTab === "inicio" && { backgroundColor: uiColors.navActiveBackground, borderColor: uiColors.navActiveBorder }]} onPress={() => setActiveTab("inicio")}>
             <Icon
               source="home-variant"
               size={18}
-              color={activeTab === "inicio" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+              color={activeTab === "inicio" ? uiColors.navActiveText : uiColors.navInactiveText}
             />
             <Text
               numberOfLines={1}
@@ -3336,7 +4086,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                 styles.navText,
                 {
                   color:
-                    activeTab === "inicio" ? theme.colors.primary : theme.colors.onSurfaceVariant,
+                    activeTab === "inicio" ? uiColors.navActiveText : uiColors.navInactiveText,
                 },
               ]}
             >
@@ -3344,11 +4094,11 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
             </Text>
           </Pressable>
 
-          <Pressable style={styles.navItem} onPress={() => setActiveTab("bolsas")}>
+          <Pressable style={[styles.navItem, activeTab === "bolsas" && styles.navItemActive, activeTab === "bolsas" && { backgroundColor: uiColors.navActiveBackground, borderColor: uiColors.navActiveBorder }]} onPress={() => setActiveTab("bolsas")}>
             <Icon
               source="wallet-outline"
               size={18}
-              color={activeTab === "bolsas" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+              color={activeTab === "bolsas" ? uiColors.navActiveText : uiColors.navInactiveText}
             />
             <Text
               numberOfLines={1}
@@ -3357,7 +4107,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                 styles.navText,
                 {
                   color:
-                    activeTab === "bolsas" ? theme.colors.primary : theme.colors.onSurfaceVariant,
+                    activeTab === "bolsas" ? uiColors.navActiveText : uiColors.navInactiveText,
                 },
               ]}
             >
@@ -3377,11 +4127,11 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         </Pressable>
 
         <View style={styles.navSideGroup}>
-          <Pressable style={styles.navItem} onPress={() => setActiveTab("movimientos")}>
+          <Pressable style={[styles.navItem, activeTab === "movimientos" && styles.navItemActive, activeTab === "movimientos" && { backgroundColor: uiColors.navActiveBackground, borderColor: uiColors.navActiveBorder }]} onPress={() => setActiveTab("movimientos")}>
             <Icon
               source="swap-horizontal"
               size={18}
-              color={activeTab === "movimientos" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+              color={activeTab === "movimientos" ? uiColors.navActiveText : uiColors.navInactiveText}
             />
             <Text
               numberOfLines={1}
@@ -3391,8 +4141,8 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                 {
                   color:
                     activeTab === "movimientos"
-                      ? theme.colors.primary
-                      : theme.colors.onSurfaceVariant,
+                      ? uiColors.navActiveText
+                      : uiColors.navInactiveText,
                 },
               ]}
             >
@@ -3400,11 +4150,11 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
             </Text>
           </Pressable>
 
-          <Pressable style={styles.navItem} onPress={() => setActiveTab("historial")}>
+          <Pressable style={[styles.navItem, activeTab === "historial" && styles.navItemActive, activeTab === "historial" && { backgroundColor: uiColors.navActiveBackground, borderColor: uiColors.navActiveBorder }]} onPress={() => setActiveTab("historial")}>
             <Icon
               source="history"
               size={18}
-              color={activeTab === "historial" ? theme.colors.primary : theme.colors.onSurfaceVariant}
+              color={activeTab === "historial" ? uiColors.navActiveText : uiColors.navInactiveText}
             />
             <Text
               numberOfLines={1}
@@ -3414,8 +4164,8 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                 {
                   color:
                     activeTab === "historial"
-                      ? theme.colors.primary
-                      : theme.colors.onSurfaceVariant,
+                      ? uiColors.navActiveText
+                      : uiColors.navInactiveText,
                 },
               ]}
             >
@@ -3427,11 +4177,11 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
 
       <Modal visible={activeModal !== null} transparent animationType="slide" onRequestClose={closeModal}>
         <KeyboardAvoidingView
-          style={[styles.modalOverlay, { paddingBottom: Math.max(insets.bottom, 18) + 14 }]}
+          style={[styles.modalOverlay, { backgroundColor: uiColors.overlay, paddingBottom: Math.max(insets.bottom, 18) + 14 }]}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
         >
-          <View style={[styles.modalCard, activeModal === "quickActions" ? styles.quickActionsModalCard : null, { backgroundColor: theme.colors.surface }]}> 
+          <View style={[styles.modalCard, activeModal === "quickActions" ? styles.quickActionsModalCard : null, { backgroundColor: uiColors.glassBackground, borderColor: uiColors.navBorder }]}> 
             {activeModal !== "wizardInitialization" && (
               <>
                 <View style={styles.modalHeader}>
@@ -3451,6 +4201,20 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <Snackbar
+        visible={feedbackVisible}
+        onDismiss={() => setFeedbackVisible(false)}
+        duration={3500}
+        style={{ backgroundColor: feedbackType === "success" ? theme.colors.secondaryContainer : theme.colors.errorContainer }}
+        theme={{
+          colors: {
+            inverseOnSurface: feedbackType === "success" ? theme.colors.onSecondaryContainer : theme.colors.onErrorContainer,
+          },
+        }}
+      >
+        {feedbackMessage}
+      </Snackbar>
     </View>
   );
 }
@@ -3482,52 +4246,105 @@ function modalTitle(activeModal: ModalKey | null) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 8,
+    paddingTop: 10,
     paddingHorizontal: 16,
   },
   topBar: {
-    borderRadius: 12,
+    borderRadius: 20,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#E2E6EA",
+    borderColor: "rgba(148, 163, 184, 0.22)",
+    minHeight: 58,
+    shadowOpacity: 0,
+    elevation: 0,
   },
-  topBarContent: {
-    alignItems: "center",
+  topBarContentLeft: {
+    alignItems: "flex-start",
   },
   workspaceName: {
     fontSize: 20,
     fontWeight: "800",
-    textAlign: "center",
+    textAlign: "left",
+    letterSpacing: 0.3,
+  },
+  dashboardIntroRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  dashboardIntroLeft: {
+    flex: 1,
+  },
+  greetingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  greetingText: {
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  familySubText: {
+    marginTop: 2,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  cycleNameText: {
+    maxWidth: "40%",
+    textAlign: "right",
+    fontSize: 14,
+    fontWeight: "700",
   },
   content: {
     paddingVertical: 18,
     paddingBottom: 130,
-    gap: 14,
+    gap: 16,
   },
   summaryCard: {
-    borderRadius: 14,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#DCE3EA",
-    backgroundColor: "#FFFFFF",
+    borderColor: "rgba(148, 163, 184, 0.25)",
+    backgroundColor: "rgba(20, 28, 43, 0.84)",
     shadowColor: "#0F172A",
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
   },
   templatesCard: {
-    borderRadius: 14,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#DCE3EA",
-    backgroundColor: "#FFFFFF",
+    borderColor: "rgba(148, 163, 184, 0.22)",
+    backgroundColor: "rgba(20, 28, 43, 0.82)",
     shadowColor: "#0F172A",
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  planningCard: {
+    borderColor: "rgba(124, 58, 237, 0.38)",
   },
   summaryTitle: {
     fontWeight: "800",
+  },
+  budgetHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  cycleStateChip: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  planningStateChip: {
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.3,
   },
   sectionHeaderRow: {
     flexDirection: "row",
@@ -3550,11 +4367,11 @@ const styles = StyleSheet.create({
   },
   metricBox: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    backgroundColor: "#F8FAFC",
-    padding: 10,
+    borderColor: "rgba(148, 163, 184, 0.18)",
+    backgroundColor: "rgba(15, 23, 42, 0.8)",
+    padding: 12,
     gap: 4,
   },
   metricLabel: {
@@ -3578,15 +4395,17 @@ const styles = StyleSheet.create({
   },
   progressTrack: {
     marginTop: 8,
-    height: 10,
+    height: 12,
     borderRadius: 999,
-    backgroundColor: "#E2E8F0",
+    backgroundColor: "rgba(30, 41, 59, 0.86)",
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.2)",
   },
   progressFill: {
     height: "100%",
     borderRadius: 999,
-    backgroundColor: "#10B981",
+    backgroundColor: "#22C55E",
   },
   sectionSpacing: {
     marginTop: 14,
@@ -3600,13 +4419,16 @@ const styles = StyleSheet.create({
   },
   entityRow: {
     marginTop: 10,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     borderBottomWidth: 1,
-    borderBottomColor: "#EEF1F4",
+    borderBottomColor: "rgba(148, 163, 184, 0.16)",
     gap: 10,
+    borderRadius: 12,
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
   },
   memberRow: {
     marginTop: 10,
@@ -3627,8 +4449,24 @@ const styles = StyleSheet.create({
   memberContributionText: {
     fontSize: 12,
   },
+  participantMiniCard: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.18)",
+    backgroundColor: "rgba(15, 23, 42, 0.56)",
+  },
+  participantDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 6,
+    marginTop: 6,
+  },
   memberName: {
     fontWeight: "700",
+    color: "#E5ECF6",
   },
   memberStatusOk: {
     fontWeight: "800",
@@ -3678,25 +4516,34 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 8,
     right: 8,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#E2E6EA",
-    backgroundColor: "#FFFFFF",
+    borderColor: "rgba(148, 163, 184, 0.22)",
+    backgroundColor: "rgba(13, 18, 31, 0.9)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-evenly",
     paddingHorizontal: 6,
     shadowColor: "#0F172A",
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
+    shadowOpacity: 0.26,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 10,
   },
   navItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "transparent",
+    minHeight: 52,
+    paddingHorizontal: 4,
+  },
+  navItemActive: {
+    shadowOpacity: 0,
+    elevation: 0,
   },
   navSideGroup: {
     flex: 1,
@@ -3709,23 +4556,26 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
     width: "100%",
+    letterSpacing: 0.2,
   },
   plusButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -18,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 1,
+    marginTop: -22,
+    shadowColor: "#16A34A",
+    shadowOpacity: 0.38,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: "rgba(110, 231, 183, 0.45)",
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: "rgba(2, 6, 23, 0.72)",
     justifyContent: "flex-end",
     paddingHorizontal: 10,
     paddingBottom: 10,
@@ -3740,11 +4590,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 10,
     paddingBottom: 18,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.22)",
     shadowColor: "#000",
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    elevation: 12,
   },
   quickActionsModalCard: {
     height: "55%",
@@ -3970,10 +4822,135 @@ const styles = StyleSheet.create({
   movementValue: {
     fontWeight: "800",
   },
+  bolsasHeroCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 9,
+  },
+  bolsasHeroAmount: {
+    marginTop: 10,
+    fontSize: 30,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  bolsasDistributionRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  bolsasDonutWrap: {
+    width: 112,
+    height: 112,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bolsasDonutCenter: {
+    position: "absolute",
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: "rgba(15, 23, 42, 0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.24)",
+  },
+  bolsasDonutCenterText: {
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  bolsasLegendColumn: {
+    flex: 1,
+    gap: 8,
+  },
+  bolsasLegendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  bolsasLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+  },
+  bolsasLegendLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  bolsasLegendValue: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  remainingPocketCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(167, 139, 250, 0.55)",
+    backgroundColor: "rgba(76, 29, 149, 0.35)",
+    shadowColor: "#581C87",
+    shadowOpacity: 0.3,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  remainingPocketAmount: {
+    marginTop: 8,
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#EDE9FE",
+  },
+  remainingPocketCaption: {
+    marginTop: 4,
+    color: "#DDD6FE",
+    fontWeight: "600",
+  },
+  remainingMetaLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#DDD6FE",
+  },
+  remainingMetaValue: {
+    marginTop: 3,
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#F5F3FF",
+  },
+  remainingProgressTrack: {
+    marginTop: 8,
+    height: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(196, 181, 253, 0.35)",
+    backgroundColor: "rgba(76, 29, 149, 0.45)",
+    overflow: "hidden",
+    justifyContent: "center",
+  },
+  remainingProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "#A78BFA",
+  },
+  remainingProgressLabel: {
+    position: "absolute",
+    alignSelf: "center",
+    fontWeight: "800",
+    fontSize: 11,
+    color: "#F5F3FF",
+  },
   pocketCard: {
-    borderRadius: 14,
+    borderRadius: 18,
     marginTop: 12,
     borderWidth: 1,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 7,
   },
   rowWithIconTwoLines: {
     flexDirection: "row",
@@ -3990,10 +4967,57 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pocketTopRow: {
+    marginTop: 6,
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
+  },
+  pocketHeaderTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  categoryPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  categoryPillText: {
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  pocketStateBadge: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  pocketMetaGrid: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 10,
+  },
+  pocketMetaItem: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.2)",
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  pocketMetaLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  pocketMetaValue: {
+    marginTop: 3,
+    fontSize: 13,
+    fontWeight: "800",
   },
   pocketBottomRow: {
     marginTop: 4,
@@ -4052,8 +5076,14 @@ const styles = StyleSheet.create({
   pocketStatusLabel: {
     fontWeight: "700",
   },
+  pocketStatusLabelCompact: {
+    fontSize: 11,
+  },
   pocketLastMovement: {
     fontWeight: "600",
+  },
+  pocketLastMovementCompact: {
+    fontSize: 11,
   },
   pocketBankRow: {
     marginTop: 8,
@@ -4068,6 +5098,153 @@ const styles = StyleSheet.create({
   pocketContract: {
     fontWeight: "600",
     textAlign: "right",
+  },
+  executionGrid: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 10,
+  },
+  executionItem: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.2)",
+    backgroundColor: "rgba(15, 23, 42, 0.56)",
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  executionLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  executionValue: {
+    marginTop: 5,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  movementHeroCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 9,
+  },
+  movementHeroAmount: {
+    marginTop: 8,
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  movementTypeSummaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  movementTypeSummaryItem: {
+    width: "48%",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.2)",
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    gap: 2,
+  },
+  movementTypeSummaryLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  movementTypeSummaryAmount: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  movementTypeSummaryCount: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  movementFilterRow: {
+    marginTop: 6,
+    paddingRight: 8,
+    gap: 8,
+  },
+  movementFilterChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.24)",
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  movementFilterChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  movementSearchInput: {
+    marginTop: 10,
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    borderRadius: 12,
+  },
+  movementEmptyCard: {
+    marginTop: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  timelineGroupBlock: {
+    marginTop: 14,
+    gap: 8,
+  },
+  timelineGroupTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  movementTimelineCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 8,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  movementTimelineTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  movementTimelineAmount: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  movementTimelineMetaRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  movementSourceChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  movementSourceChipText: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  movementPathText: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "600",
   },
   movementRowHeader: {
     flexDirection: "row",
@@ -4286,6 +5463,32 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: "#DC2626",
+  },
+  kpiGrid: {
+    marginTop: 10,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  kpiItem: {
+    width: "23%",
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.18)",
+    backgroundColor: "rgba(15, 23, 42, 0.56)",
+    alignItems: "center",
+  },
+  kpiLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  kpiValue: {
+    marginTop: 2,
+    fontSize: 13,
+    fontWeight: "800",
   },
 });
 
