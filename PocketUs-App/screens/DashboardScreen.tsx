@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useColorScheme } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,6 +16,7 @@ import {
   TextInput,
   useTheme,
 } from "react-native-paper";
+import DragList, { DragListRenderItemInfo } from "react-native-draglist";
 import Svg, { Circle, G } from "react-native-svg";
 import TopLoadingBar from "../components/TopLoadingBar";
 import { getErrorMessage } from "../utils/errorFeedback";
@@ -65,6 +66,23 @@ type ModalKey =
   | "wizardInitialization";
 
 type MovementPartyType = "MIEMBRO" | "BOLSA" | "COMPROMISO" | "OTRO";
+
+type PocketVisualItem = {
+  id: string;
+  name: string;
+  category: string;
+  categoryColor: string;
+  isRemaining: boolean;
+  priority: number;
+  targetAmount: number;
+  availableAmount: number;
+  commitmentsCount: number;
+  statusLabel: string;
+  statusColor: string;
+  fundingPercent: number;
+  fundingPercentBounded: number;
+  lastMovementLabel: string;
+};
 
 export default function DashboardScreen({ workspace, currentUserEmail, onBackToFamilies }: DashboardScreenProps) {
   const theme = useTheme();
@@ -179,6 +197,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>("inicio");
+  const mainScrollRef = useRef<ScrollView | null>(null);
   const [movementListFilter, setMovementListFilter] = useState<MovementListFilter>("TODOS");
   const [movementSearchQuery, setMovementSearchQuery] = useState("");
   const [activeModal, setActiveModal] = useState<ModalKey | null>(null);
@@ -226,6 +245,8 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const [pocketValueRule, setPocketValueRule] = useState("");
   const [isSavingPocket, setIsSavingPocket] = useState(false);
   const [pocketSubmitError, setPocketSubmitError] = useState<string | null>(null);
+  const [isReorderingPockets, setIsReorderingPockets] = useState(false);
+  const [draggablePocketCards, setDraggablePocketCards] = useState<PocketVisualItem[]>([]);
 
   const [bagCategory, setBagCategory] = useState<"Gasto" | "Ahorro">("Gasto");
   const [bagRuleType, setBagRuleType] = useState<"Valor" | "Porcentaje" | "Restante">("Valor");
@@ -309,6 +330,10 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const [pocketDetailError, setPocketDetailError] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [feedbackVisible, setFeedbackVisible] = useState(false);
+
+  useEffect(() => {
+    mainScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [activeTab]);
   const [feedbackType, setFeedbackType] = useState<"success" | "error">("error");
 
   const showFeedback = (message: string, type: "success" | "error" = "error") => {
@@ -671,6 +696,8 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
   const isInitializationComplete = initializationMissingStep === null;
 
   const budgetCycle = activeCycle ?? plannedCycle;
+  const budgetCycleState = String(budgetCycle?.state || "PLANIFICADO").toUpperCase();
+  const budgetCycleStatusColor = budgetCycleState === "ABIERTO" ? "#38BDF8" : "#A78BFA";
   const expectedTotalIncome = roundToTwoDecimals(Number(budgetCycle?.expectedTotalIncome || 0));
 
   const activePockets = (viewData?.pockets ?? []).filter(
@@ -782,11 +809,13 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       (item) => String(item.state || "ACTIVE").toUpperCase() === "ACTIVE"
     );
 
-    return pockets.map((pocket) => {
+    const visualItems: PocketVisualItem[] = pockets.map((pocket) => {
       const pocketId = String(pocket.id || "");
       const category = String(pocket.category || "GASTO").toUpperCase();
       const typeRule = String(pocket.typeRule || "");
       const isRemaining = typeRule === "-";
+      const rawPriority = Number(pocket.priority);
+      const priority = isRemaining ? 999 : (Number.isFinite(rawPriority) ? rawPriority : 0);
 
       const targetAmount = isRemaining
         ? roundToTwoDecimals(Math.max(0, computedRemainingPocketValue))
@@ -850,6 +879,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         category,
         categoryColor,
         isRemaining,
+        priority,
         targetAmount,
         availableAmount,
         commitmentsCount,
@@ -860,10 +890,35 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
         lastMovementLabel,
       };
     });
+
+    return visualItems.sort((a, b) => {
+      if (a.priority !== b.priority) {
+        return a.priority - b.priority;
+      }
+      return a.name.localeCompare(b.name);
+    });
   }, [viewData?.pockets, viewData?.movements, viewData?.commitments, computedRemainingPocketValue, expectedTotalIncome]);
 
-  const remainingPocketCard = pocketVisualItems.find((item) => item.isRemaining) ?? null;
-  const regularPocketCards = pocketVisualItems.filter((item) => !item.isRemaining);
+  const remainingPocketCard = useMemo(
+    () => pocketVisualItems.find((item) => item.isRemaining) ?? null,
+    [pocketVisualItems]
+  );
+  const regularPocketCards = useMemo(
+    () => pocketVisualItems.filter((item) => !item.isRemaining),
+    [pocketVisualItems]
+  );
+
+  useEffect(() => {
+    setDraggablePocketCards((previous) => {
+      if (
+        previous.length === regularPocketCards.length &&
+        previous.every((item, index) => item.id === regularPocketCards[index]?.id)
+      ) {
+        return previous;
+      }
+      return regularPocketCards;
+    });
+  }, [regularPocketCards]);
 
   const totalAvailableAcrossPockets = roundToTwoDecimals(
     pocketVisualItems.reduce((acc, item) => acc + item.availableAmount, 0)
@@ -1565,6 +1620,46 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       }
     } finally {
       setIsSavingPocket(false);
+    }
+  };
+
+  const handlePocketDragEnd = async (nextItemsRaw: PocketVisualItem[] | null | undefined) => {
+    if (isReorderingPockets) return;
+
+    const nextItems = Array.isArray(nextItemsRaw) ? nextItemsRaw : [];
+
+    setDraggablePocketCards(nextItems);
+
+    const priorityUpdates = nextItems
+      .map((item, index) => ({ id: item.id, nextPriority: index + 1 }))
+      .filter(({ id, nextPriority }) => {
+        const current = regularPocketCards.find((item) => item.id === id);
+        return !current || current.priority !== nextPriority;
+      });
+
+    if (priorityUpdates.length === 0) {
+      return;
+    }
+
+    try {
+      setIsReorderingPockets(true);
+      await Promise.all(
+        priorityUpdates.map((entry) =>
+          updateFamilyPocket(workspace.familyId, entry.id, "", { priority: entry.nextPriority })
+        )
+      );
+
+      if (remainingPocketCard?.id) {
+        await updateFamilyPocket(workspace.familyId, remainingPocketCard.id, "", { priority: 999 });
+      }
+
+      await refreshDashboard();
+      showSuccess("Prioridad de bolsas actualizada.");
+    } catch (error) {
+      setDraggablePocketCards(regularPocketCards);
+      showFeedback(getErrorMessage(error, "No se pudo reordenar las bolsas."));
+    } finally {
+      setIsReorderingPockets(false);
     }
   };
 
@@ -3469,6 +3564,7 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
       </Appbar.Header>
 
       <ScrollView
+        ref={mainScrollRef}
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
@@ -3495,9 +3591,11 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                   {workspace.familyName}
                 </PaperText>
               </View>
-              <PaperText style={[styles.cycleNameText, { color: uiColors.onSurface }]} numberOfLines={1}>
-                {String(budgetCycle?.name || budgetCycle?.id || "Sin ciclo")}
-              </PaperText>
+              <View style={[styles.categoryPill, { backgroundColor: `${uiColors.periodAccent}20`, borderColor: `${uiColors.periodAccent}55` }]}>
+                <PaperText style={[styles.categoryPillText, { color: uiColors.periodAccent }]} numberOfLines={1}>
+                  {String(budgetCycle?.name || budgetCycle?.id || "Sin ciclo")}
+                </PaperText>
+              </View>
             </View>
 
             <Card
@@ -3511,16 +3609,9 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                     <Icon source="chart-line" size={20} color={uiColors.periodAccent} />
                     <PaperText variant="titleMedium" style={styles.summaryTitle}>Presupuesto del ciclo</PaperText>
                   </View>
-                  <PaperText
-                    style={[
-                      styles.cycleStateChip,
-                      {
-                        color: String(budgetCycle?.state || "").toUpperCase() === "ABIERTO" ? "#38BDF8" : "#A78BFA",
-                      },
-                    ]}
-                  >
-                    {String(budgetCycle?.state || "PLANIFICADO").toUpperCase()}
-                  </PaperText>
+                  <View style={[styles.categoryPill, { backgroundColor: `${budgetCycleStatusColor}20`, borderColor: `${budgetCycleStatusColor}55` }]}>
+                    <PaperText style={[styles.categoryPillText, { color: budgetCycleStatusColor }]}>{budgetCycleState}</PaperText>
+                  </View>
                 </View>
 
                 <View style={styles.metricsRow}>
@@ -3556,7 +3647,9 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                     <Icon source="timeline-check-outline" size={20} color={uiColors.planningAccent} />
                     <PaperText variant="titleMedium" style={styles.summaryTitle}>Mi planificacion</PaperText>
                   </View>
-                  <PaperText style={[styles.planningStateChip, { color: myPlanningStatusColor }]}>{myPlanningStatusLabel}</PaperText>
+                  <View style={[styles.categoryPill, { backgroundColor: `${myPlanningStatusColor}20`, borderColor: `${myPlanningStatusColor}55` }]}>
+                    <PaperText style={[styles.categoryPillText, { color: myPlanningStatusColor }]}>{myPlanningStatusLabel}</PaperText>
+                  </View>
                 </View>
 
                 {myPlanningCardStatus === "PLANIFICADO" ? (
@@ -3704,14 +3797,9 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
                     <Icon source="wallet-outline" size={20} color={uiColors.pocketAccent} />
                     <PaperText variant="titleMedium" style={styles.summaryTitle}>Disponible total</PaperText>
                   </View>
-                  <PaperText
-                    style={[
-                      styles.cycleStateChip,
-                      { color: String(budgetCycle?.state || "").toUpperCase() === "ABIERTO" ? "#38BDF8" : "#A78BFA" },
-                    ]}
-                  >
-                    {String(budgetCycle?.state || "PLANIFICADO").toUpperCase()}
-                  </PaperText>
+                  <View style={[styles.categoryPill, { backgroundColor: `${budgetCycleStatusColor}20`, borderColor: `${budgetCycleStatusColor}55` }]}>
+                    <PaperText style={[styles.categoryPillText, { color: budgetCycleStatusColor }]}>{budgetCycleState}</PaperText>
+                  </View>
                 </View>
 
                 <PaperText style={[styles.bolsasHeroAmount, { color: uiColors.onSurface }]}>{toCurrency(totalAvailableAcrossPockets)}</PaperText>
@@ -3774,6 +3862,30 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
               </Card.Content>
             </Card>
 
+            <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
+              <Card.Content>
+                <View style={styles.sectionHeaderRow}>
+                  <Icon source="check-decagram-outline" size={20} color="#22C55E" />
+                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Estado de ejecucion</PaperText>
+                </View>
+
+                <View style={styles.executionGrid}>
+                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Miembros completados</PaperText>
+                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{`${membersCompletedCount}/${initializationMembers.length}`}</PaperText>
+                  </View>
+                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Tareas completadas</PaperText>
+                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{tasksCompletedCount}</PaperText>
+                  </View>
+                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Movimientos ejecutados</PaperText>
+                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{movementsExecutedCount}</PaperText>
+                  </View>
+                </View>
+              </Card.Content>
+            </Card>
+
             {remainingPocketCard ? (
               <Pressable onPress={() => handleOpenBagDetail(remainingPocketCard.id)}>
                 <Card mode="elevated" style={[styles.remainingPocketCard, { backgroundColor: uiColors.remainingPocketBackground, borderColor: uiColors.remainingPocketBorder }]}>
@@ -3816,91 +3928,102 @@ export default function DashboardScreen({ workspace, currentUserEmail, onBackToF
               </Pressable>
             ) : null}
 
-            {regularPocketCards.length === 0 ? (
+            {draggablePocketCards.length === 0 ? (
               <PaperText style={[styles.helperText, { color: uiColors.mutedText }]}>No hay bolsas registradas. Crea bolsas para organizar tu dinero.</PaperText>
             ) : (
-              regularPocketCards.map((item) => {
-                const categoryLabel = item.category === "AHORRO"
-                  ? "Ahorro"
-                  : item.category === "DEUDA"
-                    ? "Deuda"
-                    : "Gasto";
+              <View style={styles.pocketDraggableListWrap}>
+                <PaperText style={[styles.helperText, { color: uiColors.mutedText, marginBottom: 8 }]}>Manten oprimida una bolsa para arrastrar y cambiar su prioridad.</PaperText>
+                <DragList
+                  data={Array.isArray(draggablePocketCards) ? draggablePocketCards : []}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                  onReordered={async (fromIndex, toIndex) => {
+                    const currentItems = Array.isArray(draggablePocketCards) ? [...draggablePocketCards] : [];
+                    if (fromIndex < 0 || fromIndex >= currentItems.length) return;
 
-                return (
-                  <Pressable key={item.id} onPress={() => handleOpenBagDetail(item.id)}>
-                  <Card mode="elevated" style={[styles.pocketCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
-                    <Card.Content>
-                      <View style={styles.pocketHeaderTopRow}>
-                        <View style={[styles.categoryPill, { backgroundColor: `${item.categoryColor}20`, borderColor: `${item.categoryColor}55` }]}>
-                          <PaperText style={[styles.categoryPillText, { color: item.categoryColor }]}>{categoryLabel}</PaperText>
-                        </View>
-                        <PaperText style={[styles.pocketStateBadge, { color: item.statusColor }]}>{item.statusLabel}</PaperText>
-                      </View>
+                    const removed = currentItems.splice(fromIndex, 1);
+                    const movedItem = removed[0];
+                    if (!movedItem) return;
 
-                      <View style={styles.pocketTopRow}>
-                        <PaperText variant="titleSmall" style={[styles.pocketName, { color: uiColors.onSurface }]} numberOfLines={1}>{item.name}</PaperText>
-                        <PaperText variant="titleSmall" style={[styles.pocketValueStrong, { color: uiColors.onSurface }]}>{toCurrency(item.availableAmount)}</PaperText>
-                      </View>
+                    const boundedIndex = Math.max(0, Math.min(toIndex, currentItems.length));
+                    currentItems.splice(boundedIndex, 0, movedItem);
+                    await handlePocketDragEnd(currentItems);
+                  }}
+                  renderItem={({ item, onDragStart, onDragEnd, isActive }: DragListRenderItemInfo<PocketVisualItem>) => {
+                    const categoryLabel = item.category === "AHORRO"
+                      ? "Ahorro"
+                      : item.category === "DEUDA"
+                        ? "Deuda"
+                        : "Gasto";
 
-                      <View style={styles.pocketMetaGrid}>
-                        <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                          <PaperText style={[styles.pocketMetaLabel, { color: uiColors.mutedText }]}>Compromisos</PaperText>
-                          <PaperText style={[styles.pocketMetaValue, { color: uiColors.onSurface }]}>{item.commitmentsCount}</PaperText>
-                        </View>
-                        <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                          <PaperText style={[styles.pocketMetaLabel, { color: uiColors.mutedText }]}>Fondeado</PaperText>
-                          <PaperText style={[styles.pocketMetaValue, { color: item.statusColor }]}>{toPercent(item.fundingPercent)}</PaperText>
-                        </View>
-                      </View>
-                      
-                      <View style={[styles.pocketProgressTrack, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                        <View style={[styles.pocketProgressFill, { width: `${item.fundingPercentBounded}%`, backgroundColor: item.categoryColor }]} />
-                        <PaperText
-                          variant="labelSmall"
+                    return (
+                      <Pressable
+                        onLongPress={onDragStart}
+                        onPressOut={onDragEnd}
+                        delayLongPress={220}
+                        onPress={() => {
+                          if (!isActive) {
+                            handleOpenBagDetail(item.id);
+                          }
+                        }}
+                      >
+                        <Card
+                          mode="elevated"
                           style={[
-                            styles.pocketProgressLabel,
-                            { color: uiColors.onSurface },
+                            styles.pocketCard,
+                            { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder },
+                            isActive && styles.pocketCardDragging,
                           ]}
-                          numberOfLines={1}
                         >
-                          {`${toCurrency(item.availableAmount)} / ${toCurrency(item.targetAmount)}`}
-                        </PaperText>
-                      </View>
+                          <Card.Content>
+                            <View style={styles.pocketHeaderTopRow}>
+                              <View style={[styles.categoryPill, { backgroundColor: `${item.categoryColor}20`, borderColor: `${item.categoryColor}55` }]}>
+                                <PaperText style={[styles.categoryPillText, { color: item.categoryColor }]}>{categoryLabel}</PaperText>
+                              </View>
+                            </View>
 
-                      <View style={styles.pocketStatusRow}>
-                        <PaperText variant="bodySmall" style={[styles.pocketStatusLabel, styles.pocketStatusLabelCompact, { color: item.statusColor }]}>{`Estado: ${item.statusLabel}`}</PaperText>
-                        <PaperText variant="bodySmall" style={[styles.pocketLastMovement, styles.pocketLastMovementCompact, { color: uiColors.mutedText }]}>{`Ultimo movimiento: ${item.lastMovementLabel}`}</PaperText>
-                      </View>
-                    </Card.Content>
-                  </Card>
-                  </Pressable>
-                );
-              })
+                            <View style={styles.pocketTopRow}>
+                              <PaperText variant="titleSmall" style={[styles.pocketName, { color: uiColors.onSurface }]} numberOfLines={1}>{item.name}</PaperText>
+                              <PaperText variant="titleSmall" style={[styles.pocketValueStrong, { color: uiColors.onSurface }]}>{toCurrency(item.availableAmount)}</PaperText>
+                            </View>
+
+                            <View style={styles.pocketMetaGrid}>
+                              <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                                <PaperText style={[styles.pocketMetaLabel, { color: uiColors.mutedText }]}>Compromisos</PaperText>
+                                <PaperText style={[styles.pocketMetaValue, { color: uiColors.onSurface }]}>{item.commitmentsCount}</PaperText>
+                              </View>
+                              <View style={[styles.pocketMetaItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                                <PaperText style={[styles.pocketMetaLabel, { color: uiColors.mutedText }]}>Fondeado</PaperText>
+                                <PaperText style={[styles.pocketMetaValue, { color: item.statusColor }]}>{toPercent(item.fundingPercent)}</PaperText>
+                              </View>
+                            </View>
+
+                            <View style={[styles.pocketProgressTrack, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
+                              <View style={[styles.pocketProgressFill, { width: `${item.fundingPercentBounded}%`, backgroundColor: item.categoryColor }]} />
+                              <PaperText
+                                variant="labelSmall"
+                                style={[
+                                  styles.pocketProgressLabel,
+                                  { color: uiColors.onSurface },
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {`${toCurrency(item.availableAmount)} / ${toCurrency(item.targetAmount)}`}
+                              </PaperText>
+                            </View>
+
+                            <View style={styles.pocketStatusRow}>
+                              <PaperText variant="bodySmall" style={[styles.pocketStatusLabel, styles.pocketStatusLabelCompact, { color: item.statusColor }]}>{`Estado: ${item.statusLabel}`}</PaperText>
+                              <PaperText variant="bodySmall" style={[styles.pocketLastMovement, styles.pocketLastMovementCompact, { color: uiColors.mutedText }]}>{`Ultimo movimiento: ${item.lastMovementLabel}`}</PaperText>
+                            </View>
+                          </Card.Content>
+                        </Card>
+                      </Pressable>
+                    );
+                  }}
+                />
+              </View>
             )}
-
-            <Card mode="elevated" style={[styles.templatesCard, { backgroundColor: uiColors.cardBackground, borderColor: uiColors.cardBorder }]}>
-              <Card.Content>
-                <View style={styles.sectionHeaderRow}>
-                  <Icon source="check-decagram-outline" size={20} color="#22C55E" />
-                  <PaperText variant="titleMedium" style={styles.summaryTitle}>Estado de ejecucion</PaperText>
-                </View>
-
-                  <View style={styles.executionGrid}>
-                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Miembros completados</PaperText>
-                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{`${membersCompletedCount}/${initializationMembers.length}`}</PaperText>
-                  </View>
-                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Tareas completadas</PaperText>
-                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{tasksCompletedCount}</PaperText>
-                  </View>
-                  <View style={[styles.executionItem, { backgroundColor: uiColors.metricBackground, borderColor: uiColors.metricBorder }]}>
-                    <PaperText style={[styles.executionLabel, { color: uiColors.mutedText }]}>Movimientos ejecutados</PaperText>
-                    <PaperText style={[styles.executionValue, { color: uiColors.onSurface }]}>{movementsExecutedCount}</PaperText>
-                  </View>
-                </View>
-              </Card.Content>
-            </Card>
           </>
         )}
 
@@ -4335,16 +4458,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-  },
-  cycleStateChip: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.3,
-  },
-  planningStateChip: {
-    fontSize: 13,
-    fontWeight: "800",
-    letterSpacing: 0.3,
   },
   sectionHeaderRow: {
     flexDirection: "row",
@@ -4946,6 +5059,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     marginTop: 12,
     borderWidth: 1,
+    transform: [{ scale: 1 }],
     shadowColor: "#0F172A",
     shadowOpacity: 0.22,
     shadowRadius: 12,
@@ -5084,6 +5198,14 @@ const styles = StyleSheet.create({
   },
   pocketLastMovementCompact: {
     fontSize: 11,
+  },
+  pocketDraggableListWrap: {
+    marginTop: 2,
+    gap: 0,
+  },
+  pocketCardDragging: {
+    opacity: 0.9,
+    transform: [{ scale: 0.985 }],
   },
   pocketBankRow: {
     marginTop: 8,

@@ -45,15 +45,6 @@ export default function BtnLoginGoogle() {
 
             setEmailLogueado(user.email)
             setEstadoLogin("Autenticado")
-
-            console.log("Google login exitoso. Datos del usuario:", {
-                email: user.email,
-                name: user.name,
-                id: user.id,
-            })
-
-            // Aquí puedes enviar payload.idToken al backend
-            console.log("ID Token para backend:", payload?.idToken)
         } catch (error: unknown) {
             if (
                 typeof error === "object" &&

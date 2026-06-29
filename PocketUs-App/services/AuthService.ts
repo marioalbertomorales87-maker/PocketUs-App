@@ -80,7 +80,7 @@ export type CreateFamilyCommitmentInput = {
 };
 
 export type UpdateFamilyCommitmentInput = Partial<CreateFamilyCommitmentInput>;
-export type UpdateFamilyPocketInput = Partial<CreateFamilyPocketInput>;
+export type UpdateFamilyPocketInput = Partial<CreateFamilyPocketInput & { priority: number }>;
 
 export type CreateFamilyPocketBalanceInput = {
   periodId: string;
@@ -713,6 +713,26 @@ export async function createFamilyPocket(
     valueRule = Math.max(0, valueRule);
   }
 
+  const resolvedPriority = typeRule === "-"
+    ? 999
+    : (() => {
+        const usedPriorities = new Set<number>();
+        activePockets.forEach((row) => {
+          const rowTypeRule = String((row as Record<string, unknown>).typeRule || "").trim();
+          if (rowTypeRule === "-") return;
+          const rowPriority = Number((row as Record<string, unknown>).priority);
+          if (Number.isFinite(rowPriority) && rowPriority > 0 && rowPriority < 999) {
+            usedPriorities.add(Math.trunc(rowPriority));
+          }
+        });
+
+        let nextPriority = 1;
+        while (usedPriorities.has(nextPriority)) {
+          nextPriority += 1;
+        }
+        return nextPriority;
+      })();
+
   const pocketId = Crypto.randomUUID();
   const now = serverTimestamp();
   const pocketRef = doc(db, "families", familyId, "pockets", pocketId);
@@ -724,7 +744,7 @@ export async function createFamilyPocket(
     typeRule,
     valueRule,
     category,
-    priority: 0,
+    priority: resolvedPriority,
     createdAt: now,
     updatedAt: now,
   });
@@ -953,6 +973,11 @@ export async function updateFamilyPocket(
     payload.valueRule = Math.max(0, value);
   }
   if (input.category) payload.category = input.category;
+  if (input.priority !== undefined) {
+    const priority = Number(input.priority);
+    if (!Number.isFinite(priority)) throw new Error("POCKET_FIELDS_REQUIRED");
+    payload.priority = Math.max(0, Math.trunc(priority));
+  }
 
   const pocketRef = doc(db, "families", familyId, "pockets", pocketId);
   const pocketSnap = await getDoc(pocketRef);

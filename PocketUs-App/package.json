@@ -10,22 +10,25 @@
     "@react-native-masked-view/masked-view": "0.3.2",
     "@react-navigation/native": "^7.2.5",
     "@react-navigation/stack": "^7.9.3",
-    "expo": "~56.0.9",
-    "expo-auth-session": "~56.0.13",
+    "expo": "~56.0.12",
+    "expo-auth-session": "~56.0.14",
     "expo-crypto": "~56.0.4",
-    "expo-dev-client": "~56.0.19",
-    "expo-font": "^56.0.5",
+    "expo-dev-client": "~56.0.20",
+    "expo-font": "~56.0.7",
     "expo-status-bar": "~56.0.4",
     "expo-web-browser": "~56.0.5",
     "firebase": "^12.14.0",
     "react": "19.2.3",
     "react-native": "0.85.3",
+    "react-native-draglist": "^3.10.0",
     "react-native-gesture-handler": "~2.31.1",
     "react-native-paper": "^5.15.3",
+    "react-native-reanimated": "^4.3.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.25.2",
     "react-native-svg": "15.15.4",
-    "react-native-vector-icons": "^10.3.0"
+    "react-native-vector-icons": "^10.3.0",
+    "react-native-worklets": "0.8.3"
   },
   "scripts": {
     "start": "expo start",
@@ -36,6 +39,8 @@
   },
   "private": true,
   "devDependencies": {
+    "babel-preset-expo": "~56.0.15",
+    "expo-doctor": "^1.19.10",
     "expo-module-scripts": "^56.0.3",
     "typescript": "~6.0.3"
   }

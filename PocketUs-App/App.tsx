@@ -1,6 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import { Alert, StyleSheet, useColorScheme, View } from "react-native";
 import { useCallback, useState } from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { PaperProvider } from "react-native-paper";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import HomeNavigator from "./navigators/HomeNavigator";
@@ -74,34 +75,36 @@ export default function App() {
   }, [user]);
 
   return (
-    <PaperProvider theme={materialTheme}>
-      <SafeAreaProvider>
-        <View style={[styles.container, { backgroundColor: materialTheme.colors.background }]}>
-          {phase === "splash" && <SplashScreen onFinish={showAppShell} />}
+    <GestureHandlerRootView style={styles.container}>
+      <PaperProvider theme={materialTheme}>
+        <SafeAreaProvider>
+          <View style={[styles.container, { backgroundColor: materialTheme.colors.background }]}>
+            {phase === "splash" && <SplashScreen onFinish={showAppShell} />}
 
-          {phase === "login" && <LoginScreen onLogin={onLogin} />}
+            {phase === "login" && <LoginScreen onLogin={onLogin} />}
 
-          {phase === "families" && user && bootstrap && (
-            <HomeNavigator
-              user={user}
-              families={bootstrap.families}
-              loadingFamilies={isRefreshingFamilies}
-              onWorkspaceReady={onWorkspaceReady}
-            />
-          )}
+            {phase === "families" && user && bootstrap && (
+              <HomeNavigator
+                user={user}
+                families={bootstrap.families}
+                loadingFamilies={isRefreshingFamilies}
+                onWorkspaceReady={onWorkspaceReady}
+              />
+            )}
 
-          {phase === "dashboard" && workspace && (
-            <DashboardScreen
-              workspace={workspace}
-              currentUserEmail={String(user?.email || "")}
-              onBackToFamilies={goBackToFamilies}
-            />
-          )}
+            {phase === "dashboard" && workspace && (
+              <DashboardScreen
+                workspace={workspace}
+                currentUserEmail={String(user?.email || "")}
+                onBackToFamilies={goBackToFamilies}
+              />
+            )}
 
-          <StatusBar style={materialTheme.dark ? "light" : "dark"} />
-        </View>
-      </SafeAreaProvider>
-    </PaperProvider>
+            <StatusBar style={materialTheme.dark ? "light" : "dark"} />
+          </View>
+        </SafeAreaProvider>
+      </PaperProvider>
+    </GestureHandlerRootView>
   );
 }
 
